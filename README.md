@@ -1,15 +1,15 @@
-# Madcore Web
+# Madcore
 
-**Madcore Web** (`madcore-web`) is a high-level library for building Delta Chat-compatible messengers in web environments. It runs on the Delta Chat Relay protocol (JSON-RPC over WebSocket) and provides multi-account, PGP-first messaging with browser persistence.
+**Madcore** (`madcore`) is a high-level library for building Delta Chat-compatible messengers in web environments. It runs on the Delta Chat Relay protocol (JSON-RPC over WebSocket) and provides multi-account, PGP-first messaging with browser persistence.
 
 ---
 
 ## Installation
 
 ```bash
-npm install madcore-web
+npm install madcore
 # or
-bun add madcore-web
+bun add madcore
 ```
 
 From source:
@@ -23,16 +23,16 @@ bun run build
 
 | Import | Purpose |
 |--------|---------|
-| `madcore-web` | `DeltaChatSDK`, `DeltaChatAccount`, store helpers, types |
-| `madcore-web/store` | `MemoryStore`, `IndexedDBStore`, `createStore()` |
-| `madcore-web/types` | TypeScript type definitions |
+| `madcore` | `DeltaChatSDK`, `DeltaChatAccount`, store helpers, types |
+| `madcore/store` | `MemoryStore`, `IndexedDBStore`, `createStore()` |
+| `madcore/types` | TypeScript type definitions |
 
 ---
 
 ## Quick Start
 
 ```ts
-import { DeltaChatSDK } from 'madcore-web';
+import { DeltaChatSDK } from 'madcore';
 
 const SERVER = 'https://relay.example';
 
@@ -74,7 +74,7 @@ window.addEventListener('pagehide', () => { void acc.flushPersist(); });
 Force in-memory storage (tests):
 
 ```ts
-import { DeltaChatSDK, MemoryStore } from 'madcore-web';
+import { DeltaChatSDK, MemoryStore } from 'madcore';
 const dc = DeltaChatSDK({ store: new MemoryStore() });
 ```
 
@@ -87,7 +87,7 @@ const dc = DeltaChatSDK({ store: new MemoryStore() });
 | **[Examples & API guide](./docs/examples.md)** | Messaging, groups, events, storage restore flows |
 | **[Security](./docs/security.md)** | PGP, Autocrypt, SecureJoin |
 | **[Architecture](./docs/architecture.md)** | Module layout, WebSocket protocol, storage internals |
-| **[Core parity](./docs/parity.md)** | madcore-web vs Delta Chat core RPC |
+| **[Core parity](./docs/parity.md)** | madcore vs Delta Chat core RPC |
 
 ---
 
@@ -96,11 +96,39 @@ const dc = DeltaChatSDK({ store: new MemoryStore() });
 ```bash
 bun run dev            # tsc --watch
 bun run test           # offline unit tests (test/rpc)
+bun run build          # emit dist/
 bun run test:live-full # live E2E (needs SERVER_URL)
 ```
 
 ```bash
 SERVER_URL=https://relay.example
+```
+
+### CI & publishing
+
+| Workflow | Trigger | What it does |
+|----------|---------|----------------|
+| **CI** (`.github/workflows/ci.yml`) | push / PR to `main` | typecheck, unit tests, build |
+| **Publish** (`.github/workflows/publish.yml`) | GitHub **Release** published | re-test, build, publish to **npm** and **GitHub Packages** |
+
+**Release checklist**
+
+1. Bump `"version"` in `package.json` (e.g. `2.0.1`).
+2. Commit, tag `v2.0.1`, push the tag (or create a Release in the GitHub UI for that tag).
+3. Ensure secret **`NPM_TOKEN`** is set (npm automation token with publish rights).
+4. Publish workflow will fail if the release tag version ≠ `package.json` version.
+
+**Install from registries**
+
+```bash
+# npmjs.com
+npm install madcore
+
+# GitHub Packages (scoped as @<owner>/madcore)
+npm install @themadorg/madcore --registry=https://npm.pkg.github.com
+# .npmrc:
+#   @themadorg:registry=https://npm.pkg.github.com
+#   //npm.pkg.github.com/:_authToken=YOUR_GITHUB_PAT
 ```
 
 ---

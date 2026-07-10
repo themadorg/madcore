@@ -1,6 +1,6 @@
 # Architecture & Protocol Internals
 
-Internal design of **madcore-web**: modules, transport, and persistence.
+Internal design of **madcore**: modules, transport, and persistence.
 
 **Also see:** [Examples](./examples.md) · [Security](./security.md) · [Core parity](./parity.md)
 
@@ -9,7 +9,7 @@ Internal design of **madcore-web**: modules, transport, and persistence.
 ## Package Layout
 
 ```
-madcore-web/
+madcore/
 ├── sdk.ts             # Public barrel re-exports
 ├── store.ts           # MemoryStore, IndexedDBStore, createStore, registry
 ├── types.ts           # Public type definitions
@@ -126,12 +126,12 @@ The SDK talks to a Delta Chat Relay with **JSON-RPC over WebSocket**.
 
 ### IndexedDB layout
 
-For base name `madcore-web` (default):
+For base name `madcore` (default):
 
 | Database | Contents |
 |----------|----------|
-| `madcore-web__registry` | Multi-account index: email, serverUrl, displayName |
-| `madcore-web-{email}` | Per-account object stores: `account`, `chats`, `messages`, `contacts` |
+| `madcore__registry` | Multi-account index: email, serverUrl, displayName |
+| `madcore-{email}` | Per-account object stores: `account`, `chats`, `messages`, `contacts` |
 
 Isolation: `IndexedDBStore.forAccount(email)` (used by `DeltaChatSDK` automatically).
 

@@ -1,12 +1,12 @@
 # Security & Advanced Features
 
-PGP, Autocrypt, SecureJoin, and related advanced behavior in **madcore-web**.
+PGP, Autocrypt, SecureJoin, and related advanced behavior in **madcore**.
 
 **Also see:** [Examples](./examples.md) · [Architecture](./architecture.md) · [Core parity](./parity.md)
 
 ## PGP & Autocrypt
 
-Madcore Web is a **PGP-first** messenger library. Every account has an associated OpenPGP keypair used for end-to-end encryption.
+Madcore is a **PGP-first** messenger library. Every account has an associated OpenPGP keypair used for end-to-end encryption.
 
 ### Key Generation
 The SDK uses `OpenPGP.js` to generate **ECC (Curve25519)** keys. This provides high security with small key sizes, perfect for mobile and web environments.
@@ -56,7 +56,7 @@ While Autocrypt provides opportunistic encryption, **SecureJoin** provides **ver
 
 ## Multi-Device Synchronization
 
-Madcore Web is designed to work in a multi-device environment.
+Madcore is designed to work in a multi-device environment.
 
 ### Self-Sent Messages
 When you send a message from one device, the relay typically places a copy in the `Sent` folder. Other devices connected to the same account can see these messages.

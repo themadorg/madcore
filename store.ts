@@ -283,12 +283,12 @@ export class MemoryStore implements IDeltaChatStore {
 // ─── IndexedDB Store (Browser) ──────────────────────────────────────────────────
 
 export class IndexedDBStore implements IDeltaChatStore {
-    /** Root name used before per-account scoping (e.g. `madcore-web`) */
+    /** Root name used before per-account scoping (e.g. `madcore`) */
     readonly baseName: string;
     private dbName: string;
     private db: IDBDatabase | null = null;
 
-    constructor(dbName = 'madcore-web') {
+    constructor(dbName = 'madcore') {
         this.baseName = dbName;
         this.dbName = dbName;
     }
@@ -557,7 +557,7 @@ export class IndexedDBStore implements IDeltaChatStore {
 // ─── Factory ────────────────────────────────────────────────────────────────────
 
 /** Auto-detect environment and return the right store */
-export function createStore(dbName = 'madcore-web'): IDeltaChatStore {
+export function createStore(dbName = 'madcore'): IDeltaChatStore {
     if (typeof indexedDB !== 'undefined') {
         return new IndexedDBStore(dbName);
     }

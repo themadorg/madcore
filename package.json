@@ -1,8 +1,28 @@
 {
-  "name": "madcore-web",
+  "name": "madcore",
   "version": "2.0.0",
+  "description": "Delta Chat–compatible web SDK: multi-account messaging over chatmail WebSocket, PGP-first, IndexedDB persistence",
   "license": "LGPL-3.0-or-later",
   "type": "module",
+  "author": "The Mad Org",
+  "homepage": "https://github.com/themadorg/madcore",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/themadorg/madcore.git"
+  },
+  "bugs": {
+    "url": "https://github.com/themadorg/madcore/issues"
+  },
+  "keywords": [
+    "delta-chat",
+    "chatmail",
+    "messaging",
+    "pgp",
+    "e2ee",
+    "websocket",
+    "sdk",
+    "webxdc"
+  ],
   "main": "./dist/sdk.js",
   "types": "./dist/sdk.d.ts",
   "exports": {
@@ -21,11 +41,22 @@
   },
   "files": [
     "dist",
-    "LICENSE"
+    "LICENSE",
+    "README.md"
   ],
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org"
+  },
+  "sideEffects": false,
+  "engines": {
+    "node": ">=18"
+  },
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "bun run typecheck && bun run build",
     "test": "bun test test/rpc/",
     "test:rpc": "bun test test/rpc/",
     "test:full": "bun run test/full.ts",

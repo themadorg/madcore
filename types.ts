@@ -1,5 +1,5 @@
 /**
- * @module madcore-web/types
+ * @module madcore/types
  *
  * Type definitions for the Delta Chat Web SDK.
  * All types, interfaces, and event definitions used across the SDK.

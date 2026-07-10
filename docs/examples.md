@@ -1,6 +1,6 @@
 # Fundamentals & Core Messaging
 
-Usage guide for **madcore-web**. Install and package entry points are in the [README](../README.md).
+Usage guide for **madcore**. Install and package entry points are in the [README](../README.md).
 
 **Also see:** [Security](./security.md) · [Architecture](./architecture.md) · [Core parity](./parity.md)
 
@@ -25,7 +25,7 @@ Usage guide for **madcore-web**. Install and package entry points are in the [RE
 ## Quick Start
 
 ```ts
-import { DeltaChatSDK } from 'madcore-web';
+import { DeltaChatSDK } from 'madcore';
 
 const SERVER = 'https://relay.example';
 
@@ -176,7 +176,7 @@ The `DeltaChatSDK()` factory returns an account manager. Each account
 is identified by a **random ID** (not its email).
 
 ```ts
-import { DeltaChatSDK } from 'madcore-web';
+import { DeltaChatSDK } from 'madcore';
 
 const dc = DeltaChatSDK({ logLevel: 'info' });
 
@@ -229,9 +229,9 @@ await restored.connect(); // uses lastSeenUid for mailbox catch-up
 `DeltaChatSDK()` returns a multi-account manager (recommended for most apps).
 
 ```ts
-import { DeltaChatSDK, createStore, MemoryStore } from 'madcore-web';
+import { DeltaChatSDK, createStore, MemoryStore } from 'madcore';
 
-// Default (browser IndexedDB under name "madcore-web")
+// Default (browser IndexedDB under name "madcore")
 const dc = DeltaChatSDK({ logLevel: 'debug' });
 
 // Custom IDB name
@@ -248,7 +248,7 @@ const dc3 = DeltaChatSDK({ store: new MemoryStore() });
 Single account without the manager:
 
 ```ts
-import { DeltaChatAccount, IndexedDBStore, MemoryStore } from 'madcore-web';
+import { DeltaChatAccount, IndexedDBStore, MemoryStore } from 'madcore';
 
 // Browser — scoped DB for one email
 const store = new IndexedDBStore('my-app').forAccount('alice@relay.example');
@@ -646,7 +646,7 @@ The SDK treats Groups and Channels as specialized "chats" with multiple members.
 ### Create a Group
 
 ```ts
-import type { GroupInfo } from 'madcore-web';
+import type { GroupInfo } from 'madcore';
 
 const group = await acc.createGroup(
     'Weekend Plans',
@@ -830,7 +830,7 @@ if (avatar) {
 
 The SDK uses an `IDeltaChatStore` backend. Default is `createStore()`:
 
-- **Browser** → `IndexedDBStore` (`madcore-web` by default)
+- **Browser** → `IndexedDBStore` (`madcore` by default)
 - **Node / no IDB** → `MemoryStore`
 
 ### What is saved
@@ -994,11 +994,11 @@ In browsers, `DeltaChatSDK()` **defaults to IndexedDB**. No setup is required fo
 
 | Name | Role |
 |------|------|
-| `madcore-web__registry` | List of known emails + serverUrl |
-| `madcore-web-{email}` | Per-account keys, chats, messages, contacts |
+| `madcore__registry` | List of known emails + serverUrl |
+| `madcore-{email}` | Per-account keys, chats, messages, contacts |
 
 ```ts
-import { DeltaChatSDK } from 'madcore-web';
+import { DeltaChatSDK } from 'madcore';
 
 const dc = DeltaChatSDK({ logLevel: 'debug' });
 const { account } = await dc.register(SERVER, 'Alice');
@@ -1024,7 +1024,7 @@ for (const meta of list) {
 ### Standalone scoped store
 
 ```ts
-import { DeltaChatAccount, IndexedDBStore } from 'madcore-web';
+import { DeltaChatAccount, IndexedDBStore } from 'madcore';
 
 const store = new IndexedDBStore('my-app').forAccount('alice@relay.example');
 const acc = new DeltaChatAccount(store);
@@ -1039,7 +1039,7 @@ await acc.connect();
 ### Force in-memory
 
 ```ts
-import { DeltaChatSDK, MemoryStore } from 'madcore-web';
+import { DeltaChatSDK, MemoryStore } from 'madcore';
 const dc = DeltaChatSDK({ store: new MemoryStore() });
 ```
 
@@ -1052,7 +1052,7 @@ const dc = DeltaChatSDK({ store: new MemoryStore() });
 ### Get PGP Fingerprint from Armored Key
 
 ```ts
-import { getFingerprintFromArmored } from 'madcore-web';
+import { getFingerprintFromArmored } from 'madcore';
 
 const fp = await getFingerprintFromArmored(armoredPublicKey);
 console.log(fp); // '89EDF8188BA275C5...'

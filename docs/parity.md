@@ -1,7 +1,7 @@
-# madcore-web ↔ Delta Chat core parity
+# madcore ↔ Delta Chat core parity
 
-This document maps core JSON-RPC surface areas to **madcore-web** APIs.
-madcore-web is a **web-native chatmail client**, not a wrapper around `@deltachat/jsonrpc-client`.
+This document maps core JSON-RPC surface areas to **madcore** APIs.
+madcore is a **web-native chatmail client**, not a wrapper around `@deltachat/jsonrpc-client`.
 
 | Status | Meaning |
 |--------|---------|
@@ -12,7 +12,7 @@ madcore-web is a **web-native chatmail client**, not a wrapper around `@deltacha
 
 ## Accounts & IO
 
-| Core | madcore-web | Status |
+| Core | madcore | Status |
 |------|-------------|--------|
 | `addAccount` / `removeAccount` | `DeltaChatSDK().register` / `addAccount` / `removeAccount` | ✅ |
 | Session restore | `listPersistedAccounts` / `restoreAccount` / `loadFromStore` | ✅ |
@@ -25,7 +25,7 @@ madcore-web is a **web-native chatmail client**, not a wrapper around `@deltacha
 
 ## Messaging
 
-| Core | madcore-web | Status |
+| Core | madcore | Status |
 |------|-------------|--------|
 | `miscSendTextMessage` / `sendMsg` | `send` / `sendMessage` | ✅ |
 | Image/Video/Audio/Voice/File | `send({ image\|video\|audio\|voice\|file })` | ✅ |
@@ -41,7 +41,7 @@ madcore-web is a **web-native chatmail client**, not a wrapper around `@deltacha
 
 ## Groups & channels
 
-| Core | madcore-web | Status |
+| Core | madcore | Status |
 |------|-------------|--------|
 | `createGroupChat` | `createGroup` | ✅ |
 | Broadcast / channel | `createChannel` / `sendBroadcast` | ✅ |
@@ -53,7 +53,7 @@ madcore-web is a **web-native chatmail client**, not a wrapper around `@deltacha
 
 ## Contacts & safety
 
-| Core | madcore-web | Status |
+| Core | madcore | Status |
 |------|-------------|--------|
 | Contacts CRUD | `createContact` / `getContacts` / … | ✅ |
 | Block / unblock | `blockContact` / `unblockContact` | ✅ |
@@ -64,7 +64,7 @@ madcore-web is a **web-native chatmail client**, not a wrapper around `@deltacha
 
 ## Webxdc / location / calls
 
-| Core | madcore-web | Status |
+| Core | madcore | Status |
 |------|-------------|--------|
 | Webxdc send / status | `sendWebxdc` / `sendWebxdcStatusUpdate` | ✅ |
 | Webxdc realtime | — | ❌ |
@@ -74,7 +74,7 @@ madcore-web is a **web-native chatmail client**, not a wrapper around `@deltacha
 
 ## Backup & multi-device
 
-| Core | madcore-web | Status |
+| Core | madcore | Status |
 |------|-------------|--------|
 | `exportBackup` / `importBackup` | `exportBackup` / `importBackup` | ✅ |
 | Local chat DB | IndexedDB account snapshot + chats/messages/contacts | ✅ |

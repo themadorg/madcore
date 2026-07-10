@@ -142,7 +142,7 @@ async function main() {
     // ── Send text ──
     if (joinOk && contact) {
         try {
-            const text = `Hello from madcore-web live test 🧪 ${new Date().toISOString()}`;
+            const text = `Hello from madcore live test 🧪 ${new Date().toISOString()}`;
             const sent = await account.send(contact, { text });
             pass('send text (encrypted)', `msgId=${sent?.msgId}`);
         } catch (e: any) {

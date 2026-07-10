@@ -1,0 +1,54 @@
+# Continuous integration — typecheck, unit tests, build
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Test & build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Typecheck
+        run: bunx tsc --noEmit
+
+      - name: Unit tests (rpc)
+        run: bun run test
+
+      - name: Build
+        run: bun run build
+
+      - name: Verify package entry points
+        run: |
+          test -f dist/sdk.js
+          test -f dist/sdk.d.ts
+          test -f dist/store.js
+          test -f dist/types.js
+          node -e "import('./dist/sdk.js').then(m => {
+            if (typeof m.DeltaChatSDK !== 'function') throw new Error('DeltaChatSDK missing');
+            console.log('sdk export ok');
+          })"
