@@ -49,6 +49,16 @@ export function bracketEmail(email: string): string {
     return `<${email}>`;
 }
 
+/** Fold base64 with space every 78 chars (RFC 2822 header continuation) */
+export function foldBase64(b64: string): string {
+    let result = '';
+    for (let i = 0; i < b64.length; i += 78) {
+        if (i > 0) result += '\r\n ';
+        result += b64.substring(i, i + 78);
+    }
+    return result;
+}
+
 // ─── Inner MIME ─────────────────────────────────────────────────────────────────
 
 /**

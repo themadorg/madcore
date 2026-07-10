@@ -25,7 +25,11 @@ import type { IDeltaChatStore, StoredChat, StoredMessage, StoredContact } from '
 export interface SDKConfig {
     /** Log level for the SDK (default: 'info') */
     logLevel?: 'debug' | 'info' | 'warn' | 'error' | 'none';
-    /** Custom store implementation (default: MemoryStore — pass IndexedDBStore for browser persistence) */
+    /**
+     * Persistence backend.
+     * Default: `createStore()` — IndexedDB in browsers, MemoryStore elsewhere.
+     * Pass `new MemoryStore()` to force in-memory (tests).
+     */
     store?: IDeltaChatStore;
 }
 
@@ -36,14 +40,15 @@ export interface SDKConfig {
  *
  * | Viewtype | Description |
  * |----------|-------------|
- * | `Text` | Plain text message |
- * | `Image` | Image message (JPEG, PNG, WEBP) |
- * | `Gif` | Animated GIF |
- * | `Audio` | Audio file (MP3, M4A, FLAC, OGG) |
- * | `Voice` | Voice message recorded by user |
- * | `Video` | Video file (MP4, MOV, 3GP) |
- * | `File` | Any file attachment (PDF, DOC, etc.) |
- * | `Sticker` | Sticker image |
+ * | `Text`   | Plain text message |
+ * | `Image`  | Image message (JPEG, PNG, WEBP) |
+ * | `Gif`    | Animated GIF |
+ * | `Audio`  | Audio file (MP3, M4A, FLAC, OGG) |
+ * | `Voice`  | Voice message recorded by user |
+ * | `Video`  | Video file (MP4, MOV, 3GP) |
+ * | `File`   | Any file attachment (PDF, DOC, etc.) |
+ * | `Sticker`| Sticker image |
+ * | `Webxdc` | Webxdc app instance attachment |
  */
 export type Viewtype = 'Text' | 'Image' | 'Gif' | 'Audio' | 'Voice' | 'Video' | 'File' | 'Sticker' | 'Webxdc';
 
@@ -667,32 +672,3 @@ export interface MessageDetail {
  * - `set`: Replace all flags with the specified set
  */
 export type FlagOperation = 'add' | 'remove' | 'set';
-
-// ─── Admin Resources ──────────────────────────────────────────────────────────
-
-export interface AdminPushStatus {
-  enabled: boolean;
-  mode?: string;
-  successful_notifications?: number;
-  failed_notifications?: number;
-  last_error?: string | null;
-  [key: string]: any;
-}
-
-export interface AdminStatusResponse {
-  imap_sessions?: Array<any> | number;
-  push?: AdminPushStatus;
-  [key: string]: any;
-}
-
-export interface AdminOverviewResponse {
-  disk?: {
-    used_bytes?: number;
-    total_bytes?: number;
-    free_bytes?: number;
-    [key: string]: any;
-  };
-  registration_tokens?: Array<any>;
-  settings?: Record<string, any>;
-  [key: string]: any;
-}

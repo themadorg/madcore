@@ -21,4 +21,7 @@ bun run test:live-full
 | `config-backup.ts` | config, backup export, multi-relay |
 | `run.ts` | orchestrator (entry for `test:live-full`) |
 
-Offline unit tests stay under `test/rpc/` (browser-compatible, no network).
+Offline unit tests stay under `test/rpc/` (browser-compatible, no network), including
+`persist.test.ts` for store round-trips (MemoryStore; same API as IndexedDB).
+
+Live tests typically use `MemoryStore` so they do not depend on a browser IDB.

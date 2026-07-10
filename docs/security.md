@@ -1,8 +1,8 @@
-# Madcore Web — Security & Advanced Features (Level 3)
+# Security & Advanced Features
 
-This document provides a deep dive into the security mechanisms, encryption protocols, and advanced feature handling within **Madcore Web** (`madcore-web`).
+PGP, Autocrypt, SecureJoin, and related advanced behavior in **madcore-web**.
 
-**Documentation levels:** [Fundamentals & Messaging](./examples.md) · **Security (this page)** · [Architecture](./architecture.md)
+**Also see:** [Examples](./examples.md) · [Architecture](./architecture.md) · [Core parity](./parity.md)
 
 ## PGP & Autocrypt
 
@@ -86,7 +86,14 @@ The `lib/mime.ts` module handles the complex task of building and deconstructing
 
 ---
 
+## Local storage & secrets
+
+- **Private keys** and chat history live in **IndexedDB** (browser default) under a per-account database.
+- **Passwords are not written** to IndexedDB. On cold start call `restoreAccount(email, password, serverUrl)` with a password from your app’s secure storage or a re-login prompt.
+- Call `flushPersist()` on `pagehide` if you need a hard guarantee the latest account snapshot is on disk.
+- `exportBackup` / `importBackup` can optionally passphrase-encrypt a full portable blob for multi-device transfer.
+
 ## Related Documentation
 
-- [Fundamentals & Core Messaging](./examples.md) — Account lifecycle, SecureJoin usage, persistent storage
-- [Architecture & Protocol Internals](./architecture.md) — WebSocket protocol, UID system, module layout
+- [Fundamentals & Core Messaging](./examples.md) — Account lifecycle, SecureJoin, IndexedDB restore
+- [Architecture & Protocol Internals](./architecture.md) — Storage layout, UID cursor, modules

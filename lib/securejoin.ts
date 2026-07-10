@@ -11,6 +11,7 @@
 import type { SDKContext } from './context';
 import type { ParsedMessage, SecureJoinParsed } from '../types';
 import { log } from './logger';
+import { buildFromHeader, buildPgpMimeEnvelope } from './mime-build';
 
 const crypto = globalThis.crypto;
 
@@ -256,37 +257,20 @@ export async function sendSecureJoinAuth(
     ].join('\r\n');
 
     const armored = await ctx.encryptRaw(innerMime, peerKey);
-    const encBoundary = `encrypted-${crypto.randomUUID().slice(0, 8)}`;
-
-    const rawEmail = [
+    const rawEmail = buildPgpMimeEnvelope({
         fromHeader,
-        `To: <${toEmail}>`,
-        `Date: ${now}`,
-        `Message-ID: ${msgId}`,
-        `Subject: [...]`,
-        `Chat-Version: 1.0`,
-        `Secure-Join: ${step}`,
-        `Secure-Join-Auth: ${authToken}`,
-        `Secure-Join-Fingerprint: ${bobFingerprint}`,
-        ctx.buildAutocryptHeader(),
-        `Content-Type: multipart/encrypted; protocol="application/pgp-encrypted"; boundary="${encBoundary}"`,
-        `MIME-Version: 1.0`,
-        '',
-        `--${encBoundary}`,
-        `Content-Type: application/pgp-encrypted`,
-        `Content-Description: PGP/MIME version identification`,
-        '',
-        `Version: 1`,
-        '',
-        `--${encBoundary}`,
-        `Content-Type: application/octet-stream; name="encrypted.asc"`,
-        `Content-Description: OpenPGP encrypted message`,
-        `Content-Disposition: inline; filename="encrypted.asc"`,
-        '',
+        toHeader: `<${toEmail}>`,
+        msgId,
+        date: now,
+        subject: '[...]',
+        outerHeaders: [
+            `Secure-Join: ${step}`,
+            `Secure-Join-Auth: ${authToken}`,
+            `Secure-Join-Fingerprint: ${bobFingerprint}`,
+        ],
+        autocryptHeader: ctx.buildAutocryptHeader(),
         armored,
-        '',
-        `--${encBoundary}--`
-    ].join('\r\n');
+    });
 
     await ctx.sendRaw(ctx.credentials.email, [toEmail], rawEmail);
     log.info('securejoin', `Sent ${step} (encrypted) to ${toEmail}`);
@@ -355,35 +339,17 @@ export async function handleIncomingSecureJoin(
                 ''
             ].join('\r\n');
             const armored = await ctx.encryptRaw(innerMime, peerKey);
-            const encBoundary = `encrypted-${crypto.randomUUID().slice(0, 8)}`;
             const confirmMsgId = ctx.generateMsgId();
-            const rawEmail = [
-                `From: <${ctx.credentials.email}>`,
-                `To: <${msg.from}>`,
-                `Date: ${new Date().toUTCString()}`,
-                `Message-ID: ${confirmMsgId}`,
-                `Subject: [...]`,
-                `Chat-Version: 1.0`,
-                `Secure-Join: vc-contact-confirm`,
-                ctx.buildAutocryptHeader(),
-                `Content-Type: multipart/encrypted; protocol="application/pgp-encrypted"; boundary="${encBoundary}"`,
-                `MIME-Version: 1.0`,
-                '',
-                `--${encBoundary}`,
-                `Content-Type: application/pgp-encrypted`,
-                `Content-Description: PGP/MIME version identification`,
-                '',
-                `Version: 1`,
-                '',
-                `--${encBoundary}`,
-                `Content-Type: application/octet-stream; name="encrypted.asc"`,
-                `Content-Description: OpenPGP encrypted message`,
-                `Content-Disposition: inline; filename="encrypted.asc"`,
-                '',
+            const rawEmail = buildPgpMimeEnvelope({
+                fromHeader: `From: <${ctx.credentials.email}>`,
+                toHeader: `<${msg.from}>`,
+                msgId: confirmMsgId,
+                date: new Date().toUTCString(),
+                subject: '[...]',
+                outerHeaders: [`Secure-Join: vc-contact-confirm`],
+                autocryptHeader: ctx.buildAutocryptHeader(),
                 armored,
-                '',
-                `--${encBoundary}--`
-            ].join('\r\n');
+            });
             await ctx.sendRaw(ctx.credentials.email, [msg.from], rawEmail);
             log.info('securejoin', `Sent vc-contact-confirm (encrypted) to ${msg.from}`);
         }

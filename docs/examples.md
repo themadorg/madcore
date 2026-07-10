@@ -1,52 +1,15 @@
-# Madcore Web — Fundamentals & Core Messaging (Levels 1 & 2)
+# Fundamentals & Core Messaging
 
-Welcome to **Madcore Web** (`madcore-web`)! This is a high-level library for building Delta Chat-compatible messengers in web environments. It runs on the Delta Chat Relay protocol (JSON-RPC over WebSocket) and provides a multi-account, PGP-first messaging experience with zero backend required.
+Usage guide for **madcore-web**. Install and package entry points are in the [README](../README.md).
 
----
-
-## 📚 Documentation Levels
-
-- **[Level 1: SDK Fundamentals (This Page)](#quick-start)**
-- **[Level 2: Core Messaging & Management (This Page)](#unified-messaging-send)**
-- **[Level 3: Security & Advanced Features](./security.md)**
-- **[Level 4: Architecture & Protocol Internals](./architecture.md)**
-
----
-
-## Installation
-
-```bash
-npm install madcore-web
-# or
-bun add madcore-web
-```
-
-From source:
-
-```bash
-bun install
-bun run build
-```
-
-The package exports three entry points:
-
-| Import | Purpose |
-|--------|---------|
-| `madcore-web` | `DeltaChatSDK`, `DeltaChatAccount`, crypto helpers |
-| `madcore-web/store` | `MemoryStore`, `IndexedDBStore`, `createStore()` |
-| `madcore-web/types` | TypeScript type definitions |
-
----
+**Also see:** [Security](./security.md) · [Architecture](./architecture.md) · [Core parity](./parity.md)
 
 ## Table of Contents
 
-### Level 1: SDK Fundamentals
 - [Quick Start](#quick-start)
 - [Multi-Account Manager](#multi-account-manager)
 - [Standalone Account](#standalone-account)
 - [The Factory Pattern](#the-factory-pattern)
-
-### Level 2: Core Messaging & Management
 - [Unified Messaging (`.send()`)](#unified-messaging-send)
 - [Account Lifecycle](#account-lifecycle)
 - [Receiving Messages & Events](#receiving-messages--events)
@@ -54,8 +17,8 @@ The package exports three entry points:
 - [Broadcast Channels](#broadcast-channels)
 - [Profile & Avatars](#profile--avatars)
 - [Persistent Storage](#persistent-storage)
+- [Browser (IndexedDB)](#browser-indexeddb)
 - [Chat Management](#chat-management)
-
 
 ---
 
@@ -67,9 +30,10 @@ import { DeltaChatSDK } from 'madcore-web';
 const SERVER = 'https://relay.example';
 
 // 1. Create the SDK manager
+//    Browser → IndexedDB (createStore). Node/tests without IDB → MemoryStore.
 const dc = DeltaChatSDK({ logLevel: 'debug' });
 
-// 2. Register two accounts
+// 2. Register two accounts (keys + snapshot are persisted automatically)
 const { account: alice } = await dc.register(SERVER, 'Alice');
 const { account: bob }   = await dc.register(SERVER, 'Bob');
 
@@ -90,9 +54,8 @@ await bob.send(contact, { image: { data: base64, caption: 'Check this!' } });
 console.log(bob.status());
 ```
 
-> **Note:** The default store is `MemoryStore` (in-memory, non-persistent).
-> For browser persistence, pass `store: new IndexedDBStore('my-app')` to `DeltaChatSDK()`.
-> The default IndexedDB database name is `madcore-web`.
+> **Persistence:** In browsers, data is saved to IndexedDB by default (see [Persistent Storage](#persistent-storage)).  
+> Force RAM-only with `store: new MemoryStore()` for tests.
 
 ---
 
@@ -241,50 +204,67 @@ const aliceAgain = dc.getAccount(alice.id);
 dc.removeAccount(bob.id);
 ```
 
-### Import an Existing Account
+### Import / restore an existing account
 
 ```ts
-// If you already have credentials:
+// Fresh credentials (may also load a local snapshot if one exists)
 const acc = dc.addAccount('user@relay.example', 'password123', 'https://relay.example');
-console.log(acc.id); // random ID was assigned
-await acc.generateKeys('My Name');
 await acc.connect();
+
+// Preferred cold-start path (awaits IndexedDB load):
+const saved = await dc.listPersistedAccounts();
+// → [{ email, serverUrl, displayName, updatedAt }, ...]
+const restored = await dc.restoreAccount(
+    saved[0].email,
+    passwordFromYourSecureStorage,
+    saved[0].serverUrl,
+);
+await restored.connect(); // uses lastSeenUid for mailbox catch-up
 ```
 
 ---
 
 ## The Factory Pattern
 
-The `DeltaChatSDK()` function is a factory that returns a multi-account manager. This is the recommended way to use the SDK in most applications.
+`DeltaChatSDK()` returns a multi-account manager (recommended for most apps).
 
 ```ts
-const dc = DeltaChatSDK({
-    logLevel: 'debug',
-    store: new IndexedDBStore('my-app'), // optional persistence
-});
+import { DeltaChatSDK, createStore, MemoryStore } from 'madcore-web';
+
+// Default (browser IndexedDB under name "madcore-web")
+const dc = DeltaChatSDK({ logLevel: 'debug' });
+
+// Custom IDB name
+const dc2 = DeltaChatSDK({ store: createStore('my-app') });
+
+// Force in-memory
+const dc3 = DeltaChatSDK({ store: new MemoryStore() });
 ```
 
 ---
 
 ## Standalone Account
 
-For simpler use-cases (single account, no manager):
+Single account without the manager:
 
 ```ts
-import { DeltaChatAccount } from 'madcore-web';
-import { MemoryStore } from 'madcore-web/store';
+import { DeltaChatAccount, IndexedDBStore, MemoryStore } from 'madcore-web';
 
-const acc = new DeltaChatAccount(new MemoryStore());
-console.log(acc.id); // auto-generated random ID
-await acc.register('https://relay.example');
-await acc.generateKeys('Alice');
+// Browser — scoped DB for one email
+const store = new IndexedDBStore('my-app').forAccount('alice@relay.example');
+const acc = new DeltaChatAccount(store);
+const loaded = await acc.loadFromStore();
+if (!loaded) {
+    await acc.register('https://relay.example');
+    await acc.generateKeys('Alice');
+    await acc.flushPersist();
+}
 await acc.connect();
-const bob = await acc.createContact({
-    email: 'bob@relay.example',
-    name: 'Bob',
-    key: bobPublicKey,
-});
-await acc.sendMessage(bob, 'Hello!');
+
+// Tests / Node
+const tmp = new DeltaChatAccount(new MemoryStore());
+await tmp.register('https://relay.example');
+await tmp.generateKeys('Alice');
 ```
 
 ---
@@ -292,7 +272,8 @@ await acc.sendMessage(bob, 'Hello!');
 ## Multi-Relay
 
 Accounts can hold multiple chatmail identities and keep several WebSocket
-transports open. Relays are persisted via `saveToStore` / `loadFromStore`.
+transports open. Relays are included in the account snapshot
+(auto-persisted via `schedulePersist` / `flushPersist`).
 
 ```ts
 // Register on a second server
@@ -358,22 +339,27 @@ await acc.backgroundFetch(0);
 
 ## Account Lifecycle
 
-Manage the entire lifecycle of an account—from registration to connection and multi-relay management.
+From registration through reconnect after a browser reload.
 
 ### Register or Login
 ```ts
-// Register a new temporary account
+// New account (IndexedDB snapshot + registry entry written automatically)
 const { account } = await dc.register(SERVER, 'Alice');
 
-// Or add an existing account
+// Existing credentials (loads local snapshot in the background if present)
 const acc = dc.addAccount('user@relay.example', 'pass', SERVER);
+
+// Cold start after reload (awaits store load)
+const list = await dc.listPersistedAccounts();
+const restored = await dc.restoreAccount(list[0].email, pass, list[0].serverUrl);
 ```
 
 ### Connection Management
 ```ts
-await acc.connect();
-console.log(acc.status().isConnected);
+await acc.connect();              // uses lastSeenUid when available
+console.log(acc.getConnectivity());
 await acc.disconnect();
+await acc.flushPersist();         // optional hard flush before unload
 ```
 
 ---
@@ -842,47 +828,38 @@ if (avatar) {
 
 ## Persistent Storage
 
-The SDK automatically persists account state, contacts, chats, and
-messages via the injected store.
+The SDK uses an `IDeltaChatStore` backend. Default is `createStore()`:
 
-### Save & Restore
+- **Browser** → `IndexedDBStore` (`madcore-web` by default)
+- **Node / no IDB** → `MemoryStore`
+
+### What is saved
+
+| Data | Timing |
+|------|--------|
+| Contacts, chats, messages | Immediate on each mutation |
+| Keys, profile, groups, relays, config, `lastSeenUid` | Debounced auto-save (~250ms) |
+| Multi-account index | `{dbName}__registry` on register/restore |
 
 ```ts
-// Save current state (keys, contacts, known peers)
-await acc.saveToStore();
+await acc.saveToStore();   // force account snapshot now
+await acc.flushPersist();  // clear debounce + saveToStore
+acc.schedulePersist();     // schedule debounced snapshot
 
-// On next launch, restore:
+// Standalone restore
 const acc = await DeltaChatAccount.fromStore(store);
-if (acc) {
-    console.log(`Restored: ${acc.getCredentials().email} (ID: ${acc.id})`);
-    await acc.connect();
-} else {
-    console.log('No saved account, register new');
-}
+if (acc) await acc.connect();
 ```
 
-### Direct Store Access
+### Direct store queries (through the account)
 
 ```ts
-// All contacts
 const contacts = await acc.getContacts();
-
-// Search contacts
 const results = await acc.searchContacts('bob');
-
-// All chats
 const chats = await acc.getChatList();
-
-// Search chats
 const found = await acc.searchChats('weekend');
-
-// Chat messages (paginated)
 const msgs = await acc.getChatMessages('bob@relay.example', 50, 0);
-
-// Search messages globally
 const hits = await acc.searchMessages('important');
-
-// Search within a specific chat
 const chatHits = await acc.searchMessages('meeting', 'bob@relay.example');
 ```
 
@@ -1011,49 +988,62 @@ await acc.wsRequest('delete_mailbox', { name: 'Work' });
 
 ## Browser (IndexedDB)
 
-In browser environments, use `IndexedDBStore` for persistent storage:
+In browsers, `DeltaChatSDK()` **defaults to IndexedDB**. No setup is required for basic persistence.
 
-```ts
-import { DeltaChatAccount } from 'madcore-web';
-import { IndexedDBStore } from 'madcore-web/store';
+### Database names
 
-const store = new IndexedDBStore('my-app');
-const acc = new DeltaChatAccount(store);
-
-// Try restoring a previous session
-const loaded = await acc.loadFromStore();
-if (!loaded) {
-    await acc.register('https://relay.example');
-    await acc.generateKeys('Alice');
-    await acc.saveToStore();
-}
-
-await acc.connect();
-```
-
-### Multi-Account in Browser
+| Name | Role |
+|------|------|
+| `madcore-web__registry` | List of known emails + serverUrl |
+| `madcore-web-{email}` | Per-account keys, chats, messages, contacts |
 
 ```ts
 import { DeltaChatSDK } from 'madcore-web';
-import { IndexedDBStore } from 'madcore-web/store';
 
-const dc = DeltaChatSDK({
-    logLevel: 'debug',
-    store: new IndexedDBStore('my-app'),
-});
+const dc = DeltaChatSDK({ logLevel: 'debug' });
+const { account } = await dc.register(SERVER, 'Alice');
+// snapshot flushed automatically
+await account.connect(); // resumes from lastSeenUid when present
 
-// Each account gets a random ID and an isolated IndexedDB database
-const work     = await dc.register(SERVER, 'Work Account');
-const personal = await dc.register(SERVER, 'Personal');
-
-const workAcc     = dc.getAccount(work.id);
-const personalAcc = dc.getAccount(personal.id);
-
-await Promise.all([workAcc.connect(), personalAcc.connect()]);
-
-// Connect work account to a second relay
-await workAcc.connect('https://backup-relay.example');
+// Hard guarantee on navigation away
+window.addEventListener('pagehide', () => { void account.flushPersist(); });
 ```
+
+### Cold start (multi-account)
+
+```ts
+const dc = DeltaChatSDK();
+const list = await dc.listPersistedAccounts();
+for (const meta of list) {
+    const password = await yourVault.get(meta.email); // app-owned secret storage
+    const acc = await dc.restoreAccount(meta.email, password, meta.serverUrl);
+    await acc.connect();
+}
+```
+
+### Standalone scoped store
+
+```ts
+import { DeltaChatAccount, IndexedDBStore } from 'madcore-web';
+
+const store = new IndexedDBStore('my-app').forAccount('alice@relay.example');
+const acc = new DeltaChatAccount(store);
+if (!(await acc.loadFromStore())) {
+    await acc.register('https://relay.example');
+    await acc.generateKeys('Alice');
+    await acc.flushPersist();
+}
+await acc.connect();
+```
+
+### Force in-memory
+
+```ts
+import { DeltaChatSDK, MemoryStore } from 'madcore-web';
+const dc = DeltaChatSDK({ store: new MemoryStore() });
+```
+
+**Note:** Passwords are **not** stored in IndexedDB. Persist them with your own secure storage (or re-prompt the user) and pass them to `restoreAccount` / `addAccount`.
 
 ---
 

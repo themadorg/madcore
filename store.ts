@@ -101,7 +101,18 @@ export interface StoredContact {
     blocked?: boolean;
 }
 
+/** Group/channel registry snapshot (persisted with the account) */
+export interface StoredGroup {
+    grpId: string;
+    name: string;
+    description?: string;
+    members: string[];
+    type: 'group' | 'broadcast';
+    broadcastSecret?: string;
+}
+
 export interface StoredAccount {
+    /** Always stored lowercase (IDB / map key) */
     email: string;
     password: string;
     serverUrl: string;
@@ -116,6 +127,10 @@ export interface StoredAccount {
     config?: Record<string, string>;
     /** Extra relays for multi-relay accounts */
     relays?: Array<{ id: string; serverUrl: string; email: string; password: string }>;
+    /** Group / channel membership registry */
+    groups?: StoredGroup[];
+    /** Highest processed mailbox UID (for reconnect sync) */
+    lastSeenUid?: number;
 }
 
 /** Webxdc status updates keyed by instance message id */
@@ -128,6 +143,18 @@ export interface StoredWebxdcUpdate {
     document?: string;
     from: string;
     at: number;
+}
+
+/**
+ * Lightweight multi-account index entry (lives in `{baseName}__registry` IDB).
+ * Full account data lives in `{baseName}-{email}`.
+ */
+export interface PersistedAccountMeta {
+    email: string;
+    serverUrl: string;
+    displayName?: string;
+    /** Wall-clock ms when last remembered / updated */
+    updatedAt: number;
 }
 
 // ─── Store Interface ────────────────────────────────────────────────────────────
@@ -187,7 +214,8 @@ export class MemoryStore implements IDeltaChatStore {
         return [...this.accounts.values()];
     }
     async saveAccount(account: StoredAccount) {
-        this.accounts.set(account.email.toLowerCase(), account);
+        const email = account.email.toLowerCase();
+        this.accounts.set(email, { ...account, email });
     }
     async deleteAccount() {
         const first = [...this.accounts.keys()][0];
@@ -255,23 +283,105 @@ export class MemoryStore implements IDeltaChatStore {
 // ─── IndexedDB Store (Browser) ──────────────────────────────────────────────────
 
 export class IndexedDBStore implements IDeltaChatStore {
+    /** Root name used before per-account scoping (e.g. `madcore-web`) */
+    readonly baseName: string;
     private dbName: string;
     private db: IDBDatabase | null = null;
 
     constructor(dbName = 'madcore-web') {
+        this.baseName = dbName;
         this.dbName = dbName;
     }
 
-    /** Reopen the store scoped to a specific account. 
-     *  This changes the underlying IDB database to `{baseName}-{email}` for multi-account isolation.
+    /**
+     * Reopen this instance scoped to one account.
+     * DB name becomes `{baseName}-{email}` for multi-account isolation.
      */
     reopenForAccount(accountEmail: string) {
-        const baseDbName = this.dbName.replace(/-[^-]+@[^-]+$/, ''); // strip any existing account suffix
-        this.dbName = `${baseDbName}-${accountEmail.toLowerCase()}`;
+        this.dbName = `${this.baseName}-${accountEmail.toLowerCase()}`;
         if (this.db) {
             this.db.close();
             this.db = null;
         }
+    }
+
+    /**
+     * Return a new store instance for one account (does not mutate this instance).
+     * Prefer this for multi-account managers so accounts don't share one open DB handle.
+     */
+    forAccount(accountEmail: string): IndexedDBStore {
+        const scoped = new IndexedDBStore(this.baseName);
+        scoped.reopenForAccount(accountEmail);
+        return scoped;
+    }
+
+    // ── Multi-account registry (root DB: `{baseName}__registry`) ─────────────
+
+    private registryDbName(): string {
+        return `${this.baseName}__registry`;
+    }
+
+    private async getRegistryDB(): Promise<IDBDatabase> {
+        return new Promise((resolve, reject) => {
+            const request = indexedDB.open(this.registryDbName(), 1);
+            request.onupgradeneeded = () => {
+                const db = request.result;
+                if (!db.objectStoreNames.contains('accounts')) {
+                    db.createObjectStore('accounts', { keyPath: 'email' });
+                }
+            };
+            request.onsuccess = () => resolve(request.result);
+            request.onerror = () => reject(request.error);
+        });
+    }
+
+    /** List accounts known to this browser (email + serverUrl). Does not load keys. */
+    async listPersistedAccounts(): Promise<PersistedAccountMeta[]> {
+        if (typeof indexedDB === 'undefined') return [];
+        const db = await this.getRegistryDB();
+        return new Promise((resolve, reject) => {
+            const tx = db.transaction('accounts', 'readonly');
+            const req = tx.objectStore('accounts').getAll();
+            req.onsuccess = () => {
+                const rows = (req.result as PersistedAccountMeta[]) || [];
+                resolve(rows.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0)));
+            };
+            req.onerror = () => reject(req.error);
+        });
+    }
+
+    /** Remember an account email in the multi-account index (after register / restore). */
+    async rememberAccount(meta: {
+        email: string;
+        serverUrl: string;
+        displayName?: string;
+    }): Promise<void> {
+        if (typeof indexedDB === 'undefined') return;
+        const entry: PersistedAccountMeta = {
+            email: meta.email.toLowerCase(),
+            serverUrl: meta.serverUrl,
+            displayName: meta.displayName,
+            updatedAt: Date.now(),
+        };
+        const db = await this.getRegistryDB();
+        return new Promise((resolve, reject) => {
+            const tx = db.transaction('accounts', 'readwrite');
+            tx.objectStore('accounts').put(entry);
+            tx.oncomplete = () => resolve();
+            tx.onerror = () => reject(tx.error);
+        });
+    }
+
+    /** Remove an email from the multi-account index (does not delete the account DB). */
+    async forgetAccount(email: string): Promise<void> {
+        if (typeof indexedDB === 'undefined') return;
+        const db = await this.getRegistryDB();
+        return new Promise((resolve, reject) => {
+            const tx = db.transaction('accounts', 'readwrite');
+            tx.objectStore('accounts').delete(email.toLowerCase());
+            tx.oncomplete = () => resolve();
+            tx.onerror = () => reject(tx.error);
+        });
     }
 
     private async getDB(): Promise<IDBDatabase> {
@@ -332,7 +442,8 @@ export class IndexedDBStore implements IDeltaChatStore {
         return await this.tx<StoredAccount[]>('account', 'readonly', s => s.getAll());
     }
     async saveAccount(account: StoredAccount) {
-        await this.tx('account', 'readwrite', s => s.put(account));
+        const normalized = { ...account, email: account.email.toLowerCase() };
+        await this.tx('account', 'readwrite', s => s.put(normalized));
     }
     async deleteAccount() {
         await this.tx('account', 'readwrite', s => s.clear());

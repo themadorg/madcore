@@ -1,8 +1,8 @@
-# Madcore Web — Architecture & Protocol Internals (Level 4)
+# Architecture & Protocol Internals
 
-This document provides a technical deep dive into the internal design of **Madcore Web** (`madcore-web`), its communication protocols, and its modular architecture.
+Internal design of **madcore-web**: modules, transport, and persistence.
 
-**Documentation levels:** [Fundamentals & Messaging](./examples.md) · [Security](./security.md) · **Architecture (this page)**
+**Also see:** [Examples](./examples.md) · [Security](./security.md) · [Core parity](./parity.md)
 
 ---
 
@@ -10,36 +10,63 @@ This document provides a technical deep dive into the internal design of **Madco
 
 ```
 madcore-web/
-├── sdk.ts          # DeltaChatSDK factory, DeltaChatAccount class
-├── store.ts        # MemoryStore, IndexedDBStore, IDeltaChatStore
-├── types.ts        # Public type definitions
-└── lib/
-    ├── index.ts       # Internal module re-exports
-    ├── transport.ts   # WebSocket / REST network layer
-    ├── crypto.ts      # OpenPGP key management
-    ├── mime.ts        # RFC 2822 parsing
-    ├── mime-build.ts  # Shared PGP/MIME envelope builders
-    ├── messaging.ts   # 1:1 send helpers (text, media, MDN, …)
-    ├── securejoin.ts  # QR / URI handshake + checkQr
-    ├── group.ts       # Groups, broadcast, group actions
-    ├── viewtype.ts    # Viewtype ↔ store type mapping
-    ├── webxdc.ts      # Webxdc apps + status updates
-    ├── backup.ts      # Export/import encrypted backup
+├── sdk.ts             # Public barrel re-exports
+├── store.ts           # MemoryStore, IndexedDBStore, createStore, registry
+├── types.ts           # Public type definitions
+├── account/           # Class hierarchy (inheritance)
+│   ├── utils.ts       # IDs, base64
+│   ├── base.ts        # State, lifecycle, transport, events, persist
+│   ├── contacts.ts    # Contacts, block list, QR
+│   ├── messaging.ts   # 1:1 outbound sends
+│   ├── groups.ts      # Groups / channels + unified send()
+│   ├── securejoin.ts  # SecureJoin handshake
+│   ├── profile.ts     # Display name & avatar
+│   ├── inbox.ts       # Inbound pipeline + chat store ops
+│   ├── features.ts    # Webxdc, location, calls, backup, config
+│   ├── account.ts     # DeltaChatAccount (concrete)
+│   ├── manager.ts     # DeltaChatSDK multi-account factory
+│   └── index.ts       # Layer re-exports
+└── lib/               # Functional protocol helpers (SDKContext)
+    ├── transport.ts   # WebSocket + REST
+    ├── crypto.ts      # OpenPGP / Autocrypt
+    ├── mime.ts        # RFC 2822 parse / decrypt
+    ├── mime-build.ts  # Shared PGP/MIME envelopes
+    ├── messaging.ts   # 1:1 send helpers
+    ├── securejoin.ts  # QR / SecureJoin
+    ├── group.ts       # Group fan-out
+    ├── viewtype.ts    # Viewtype ↔ store type
+    ├── webxdc.ts      # Webxdc apps
+    ├── backup.ts      # Encrypted backup blob
     ├── location.ts    # Location streaming
-    ├── calls.ts       # WebRTC call signaling
-    ├── profile.ts     # Display name & avatar handling
-    ├── context.ts     # Per-account runtime context
-    └── logger.ts      # Configurable log levels
+    ├── calls.ts       # WebRTC signaling
+    ├── profile.ts     # Avatar helpers
+    ├── context.ts     # SDKContext
+    └── logger.ts      # Log levels
 ```
 
+### Account class inheritance
 
+```
+AccountBase
+  → AccountContacts
+    → AccountMessaging
+      → AccountGroups
+        → AccountSecureJoin
+          → AccountProfile
+            → AccountInbox
+              → AccountFeatures
+                → DeltaChatAccount
+```
+
+Protocol logic lives in `lib/*` pure functions. Account classes hold state, events, and storage.
+
+---
 
 ## The WebSocket Protocol
 
-The SDK communicates with the Delta Chat Relay using a **bidirectional JSON-RPC over WebSocket** protocol.
+The SDK talks to a Delta Chat Relay with **JSON-RPC over WebSocket**.
 
-### JSON-RPC Message Structure
-Every client-initiated request has a unique `req_id` used for correlating reactions.
+### Client request
 
 ```json
 {
@@ -53,8 +80,7 @@ Every client-initiated request has a unique `req_id` used for correlating reacti
 }
 ```
 
-### Server Responses
-The server responds with the same `req_id`:
+### Server response
 
 ```json
 {
@@ -64,8 +90,7 @@ The server responds with the same `req_id`:
 }
 ```
 
-### Push Notifications
-When a new message arrives, the server "pushes" an event without a `req_id`:
+### Push (no `req_id`)
 
 ```json
 {
@@ -81,81 +106,88 @@ When a new message arrives, the server "pushes" an event without a `req_id`:
 
 ## The UID System
 
-The Delta Chat Relay uses an **Incremental UID** system to track messages.
+1. Each mailbox message has an incremental integer **UID**.
+2. On `connect()`, the SDK sends its highest known UID (`lastSeenUid` from the store when available).
+3. The server pushes messages with higher UIDs (catch-up after offline).
 
-1. **UIDs:** Each message in a mailbox is assigned a unique, incrementing integer `UID`.
-2. **Synchronization:** When connecting via WebSocket, the SDK sends its highest known UID. The server then pushes all messages with a higher UID that arrived while the SDK was offline.
-3. **Optimistic Sync:** This ensures that no messages are missed during network interruptions.
-
----
-
-## SDK Internal Modularization
-
-The SDK is divided into several focused modules to maximize maintainability and testability.
-
-### `lib/transport.ts` (Network Layer)
-- This is the **only** module that interacts with the network.
-- It provides high-level `send` and `fetch` methods.
-- It manages the WebSocket lifecycle (connect, disconnect, automatic reconnect).
-- It abstracts away the choice between WebSocket (binary, real-time) and REST (fallback, stateless).
-
-### `lib/crypto.ts` (Security Layer)
-- Wraps `OpenPGP.js`.
-- Pure functions for PGP key generation, encryption, and decryption.
-- Implements Autocrypt header building and parsing.
-
-### `lib/mime.ts` (Parsing Layer)
-- Handles the complex world of RFC 2822 MIME.
-- Extracts `From`, `To`, `Subject`, and `Message-ID`.
-- Handles `multipart/mixed` and `multipart/encrypted`.
-- Decodes attachments and base64-encoded body parts.
-- Strips signatures and email preambles (matches core library logic).
-
-### `lib/messaging.ts` (Logic Layer)
-- High-level methods for sending text, images, videos, and replies.
-- Implements unified `send()` logic (target resolution + payload construction).
-
-### `lib/securejoin.ts` (Handshake Layer)
-- State machine for the 4-phase SecureJoin protocol.
-- URI generation and parsing.
+`lastSeenUid` is part of the account snapshot and is updated as inbound mail is processed.
 
 ---
 
-## Storage & Multi-Account Manager
+## Storage
 
-### `DeltaChatSDK()` (The Factory)
-The root export of `madcore-web` is a factory that returns a **Multi-Account Manager**. This manager:
-- Keeps a registry of all active accounts.
-- Routes incoming server-push events to the correct account instance based on the `X-Email` header.
-- Manages global settings and logging.
+### Backends
 
-### `IDeltaChatStore`
-The SDK is store-agnostic. Any object implementing the `IDeltaChatStore` interface can be used for persistence.
-- **`MemoryStore`:** Default, in-memory, non-persistent.
-- **`IndexedDBStore`:** Persistent, for use in browser environments.
+| Backend | When |
+|---------|------|
+| `createStore()` | **Default** — IndexedDB if available, else MemoryStore |
+| `IndexedDBStore` | Browser persistence |
+| `MemoryStore` | Tests / Node without IDB |
+
+### IndexedDB layout
+
+For base name `madcore-web` (default):
+
+| Database | Contents |
+|----------|----------|
+| `madcore-web__registry` | Multi-account index: email, serverUrl, displayName |
+| `madcore-web-{email}` | Per-account object stores: `account`, `chats`, `messages`, `contacts` |
+
+Isolation: `IndexedDBStore.forAccount(email)` (used by `DeltaChatSDK` automatically).
+
+### What is written when
+
+| Data | Timing |
+|------|--------|
+| Chats, messages, contacts | **Immediate** on mutation |
+| Account snapshot (keys, profile photo, groups registry, config, relays, `lastSeenUid`) | **Debounced** (~250ms) via `schedulePersist()` |
+| Registry entry | On `register` / `restoreAccount` / `addAccount` |
+
+### Public APIs
+
+```ts
+await acc.saveToStore();      // write account snapshot now
+await acc.loadFromStore();    // restore snapshot + contacts maps
+await acc.flushPersist();     // cancel debounce + saveToStore
+acc.schedulePersist();        // debounce snapshot write
+
+// Manager
+await dc.listPersistedAccounts();
+await dc.restoreAccount(email, password, serverUrl?);
+```
+
+### Ephemeral (not persisted)
+
+Active call sessions, live location streams, SecureJoin invite tokens, and the in-memory webxdc status-update map. Message history (including webxdc instances) still lives in the message store.
 
 ---
 
-## Developing Extensions
+## Multi-account manager
 
-### Webxdc Support
-Webxdc ("Apps in Chat") is implemented in `lib/webxdc.ts`:
+`DeltaChatSDK()`:
 
-- `sendWebxdc` — send an `.xdc` attachment (`application/webxdc`, `Chat-Content: app`)
-- `sendWebxdcStatusUpdate` / `getWebxdcStatusUpdates` — JSON status updates keyed by instance Message-ID
-- Event: `DC_EVENT_WEBXDC_STATUS_UPDATE`
-
-Realtime Webxdc channels are not yet implemented.
-
-### Shared MIME builders
-`lib/mime-build.ts` is the single place that constructs PGP/MIME envelopes for 1:1 and group fan-out.
-
-### Custom Transports
-While Madcore Web defaults to the Delta Chat WebSocket Relay, it can be extended with custom `Transport` implementations (e.g., to bridge into other messaging protocols).
+- Holds in-session account handles (`listAccounts` / `getAccount`).
+- Gives each account an isolated store when using IndexedDB.
+- Remembers emails in the registry for cold start.
+- Does **not** store passwords in the registry — the app must supply password on restore.
 
 ---
 
-## Related Documentation
+## Lib modules (protocol)
 
-- [Fundamentals & Core Messaging](./examples.md) — Quick start, `send()`, groups, storage
-- [Security & Advanced Features](./security.md) — PGP, Autocrypt, SecureJoin, media handling
+| Module | Role |
+|--------|------|
+| `transport` | Network only (WS + REST) |
+| `crypto` | Keygen, encrypt, Autocrypt headers |
+| `mime` / `mime-build` | Parse / build MIME & PGP envelopes |
+| `messaging` / `group` | Outbound 1:1 and group payloads |
+| `securejoin` | QR + 4-phase handshake |
+| `webxdc` / `location` / `calls` | Feature payloads |
+
+---
+
+## Related docs
+
+- [Examples](./examples.md) — app-facing usage and restore flows
+- [Security](./security.md) — PGP / SecureJoin
+- [Parity](./parity.md) — vs Delta Chat core

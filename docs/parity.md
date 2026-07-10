@@ -15,6 +15,8 @@ madcore-web is a **web-native chatmail client**, not a wrapper around `@deltacha
 | Core | madcore-web | Status |
 |------|-------------|--------|
 | `addAccount` / `removeAccount` | `DeltaChatSDK().register` / `addAccount` / `removeAccount` | ✅ |
+| Session restore | `listPersistedAccounts` / `restoreAccount` / `loadFromStore` | ✅ |
+| Local DB | IndexedDB (`createStore`) / MemoryStore | 🌐 |
 | `configure` / IMAP-SMTP | `register` + `connect` (WS/REST) | 🟡 |
 | `startIo` / `stopIo` | `connect` / `disconnect` | 🟡 |
 | `getConnectivity` | `getConnectivity` / `getConnectivityHtml` | ✅ |
@@ -75,9 +77,12 @@ madcore-web is a **web-native chatmail client**, not a wrapper around `@deltacha
 | Core | madcore-web | Status |
 |------|-------------|--------|
 | `exportBackup` / `importBackup` | `exportBackup` / `importBackup` | ✅ |
+| Local chat DB | IndexedDB account snapshot + chats/messages/contacts | ✅ |
+| Mailbox cursor | `lastSeenUid` restored on `connect()` | ✅ |
 | Backup QR second device | partial via `checkQr` backup kinds | 🟡 |
 | IMAP folder watch | `setWatchedMailboxes` / multi-mailbox fetch | 🟡 |
-| IMAP METADATA config | local `setConfig` / `getConfig` | 🟡 |
+| IMAP METADATA config | local `setConfig` / `getConfig` (persisted) | 🟡 |
+| Password in local DB | **not stored** — app supplies on restore | 🌐 |
 
 ## Explicitly not ported
 

@@ -10,8 +10,7 @@
 
 import type { SDKContext } from './context';
 import { log } from './logger';
-
-const crypto = globalThis.crypto;
+import { buildFromHeader, buildPgpMimeEnvelope, foldBase64 } from './mime-build';
 
 // ─── Display Name ───────────────────────────────────────────────────────────────
 
@@ -74,10 +73,7 @@ export async function sendProfilePhoto(ctx: SDKContext, toEmail: string, text = 
 
     const msgId = ctx.generateMsgId();
     const now = new Date().toUTCString();
-    const fromHeader = ctx.displayName
-        ? `From: "${ctx.displayName}" <${ctx.credentials.email}>`
-        : `From: <${ctx.credentials.email}>`;
-
+    const fromHeader = buildFromHeader(ctx);
     const avatarHeader = `Chat-User-Avatar: base64:${ctx.profilePhotoB64}`;
 
     const innerMime = [
@@ -91,43 +87,22 @@ export async function sendProfilePhoto(ctx: SDKContext, toEmail: string, text = 
     ].join('\r\n');
 
     const armored = await ctx.encryptRaw(innerMime, peerKey);
-    const encBoundary = `encrypted-${crypto.randomUUID().slice(0, 8)}`;
-
-    const rawEmail = [
+    const rawEmail = buildPgpMimeEnvelope({
         fromHeader,
-        `To: <${toEmail}>`,
-        `Date: ${now}`,
-        `Message-ID: ${msgId}`,
-        `Subject: [...]`,
-        `Chat-Version: 1.0`,
-        ctx.buildAutocryptHeader(),
-        `Content-Type: multipart/encrypted; protocol="application/pgp-encrypted"; boundary="${encBoundary}"`,
-        `MIME-Version: 1.0`,
-        '',
-        `--${encBoundary}`,
-        `Content-Type: application/pgp-encrypted`,
-        `Content-Description: PGP/MIME version identification`,
-        '',
-        `Version: 1`,
-        '',
-        `--${encBoundary}`,
-        `Content-Type: application/octet-stream; name="encrypted.asc"`,
-        `Content-Description: OpenPGP encrypted message`,
-        `Content-Disposition: inline; filename="encrypted.asc"`,
-        '',
+        toHeader: `<${toEmail}>`,
+        msgId,
+        date: now,
+        subject: '[...]',
+        outerHeaders: [],
+        autocryptHeader: ctx.buildAutocryptHeader(),
         armored,
-        '',
-        `--${encBoundary}--`
-    ].join('\r\n');
+    });
 
     await ctx.sendRaw(ctx.credentials.email, [toEmail], rawEmail);
     ctx.sentAvatarTo.add(toEmail.toLowerCase());
     log.info('profile', `Sent profile photo to ${toEmail}`);
     return msgId;
 }
-
-/** Alias for sendProfilePhoto that explicitly returns the msgId */
-export const sendProfilePhotoReturningId = sendProfilePhoto;
 
 /** Broadcast profile photo to all known contacts */
 export async function broadcastProfilePhoto(ctx: SDKContext): Promise<void> {
@@ -144,14 +119,3 @@ export async function broadcastProfilePhoto(ctx: SDKContext): Promise<void> {
     }
 }
 
-// ─── Helpers ────────────────────────────────────────────────────────────────────
-
-/** Fold base64 data with space every 78 chars (RFC 2822 header continuation) */
-function foldBase64(b64: string): string {
-    let result = '';
-    for (let i = 0; i < b64.length; i += 78) {
-        if (i > 0) result += '\r\n ';
-        result += b64.substring(i, i + 78);
-    }
-    return result;
-}

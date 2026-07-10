@@ -463,40 +463,23 @@ export async function sendGroupMemberAdded(
         ].join('\r\n');
 
         const armored = await ctx.encryptRaw(innerMime, peerKey);
-        const encBoundary = `encrypted-${crypto.randomUUID().slice(0, 8)}`;
-
-        const rawEmail = [
+        const rawEmail = buildPgpMimeEnvelope({
             fromHeader,
-            `To: ${toList}`,
-            `Date: ${now}`,
-            `Message-ID: ${msgId}`,
-            `Subject: ${group.name}`,
-            `Chat-Version: 1.0`,
-            `Chat-Group-ID: ${group.grpId}`,
-            `Chat-List-Id: ${listId}`,
-            `Chat-Group-Name: ${group.name}`,
-            `Chat-Group-Member-Added: ${addedEmail}`,
-            ...(group.type === 'broadcast' ? [`Chat-Group-Is-Broadcast: 1`] : []),
-            ...(fprHeader ? [fprHeader] : []),
-            ctx.buildAutocryptHeader(),
-            `Content-Type: multipart/encrypted; protocol="application/pgp-encrypted"; boundary="${encBoundary}"`,
-            `MIME-Version: 1.0`,
-            '',
-            `--${encBoundary}`,
-            `Content-Type: application/pgp-encrypted`,
-            `Content-Description: PGP/MIME version identification`,
-            '',
-            `Version: 1`,
-            '',
-            `--${encBoundary}`,
-            `Content-Type: application/octet-stream; name="encrypted.asc"`,
-            `Content-Description: OpenPGP encrypted message`,
-            `Content-Disposition: inline; filename="encrypted.asc"`,
-            '',
+            toHeader: toList,
+            msgId,
+            date: now,
+            subject: group.name,
+            outerHeaders: [
+                `Chat-Group-ID: ${group.grpId}`,
+                `Chat-List-Id: ${listId}`,
+                `Chat-Group-Name: ${group.name}`,
+                `Chat-Group-Member-Added: ${addedEmail}`,
+                ...(group.type === 'broadcast' ? [`Chat-Group-Is-Broadcast: 1`] : []),
+                ...(fprHeader ? [fprHeader] : [])
+            ],
+            autocryptHeader: ctx.buildAutocryptHeader(),
             armored,
-            '',
-            `--${encBoundary}--`
-        ].join('\r\n');
+        });
 
         await ctx.sendRaw(ctx.credentials.email, [recipient], rawEmail);
     }
@@ -558,40 +541,23 @@ export async function sendGroupMemberRemoved(
         ].join('\r\n');
 
         const armored = await ctx.encryptRaw(innerMime, peerKey);
-        const encBoundary = `encrypted-${crypto.randomUUID().slice(0, 8)}`;
-
-        const rawEmail = [
+        const rawEmail = buildPgpMimeEnvelope({
             fromHeader,
-            `To: ${toList}`,
-            `Date: ${now}`,
-            `Message-ID: ${msgId}`,
-            `Subject: ${group.name}`,
-            `Chat-Version: 1.0`,
-            `Chat-Group-ID: ${group.grpId}`,
-            `Chat-List-Id: ${listId}`,
-            `Chat-Group-Name: ${group.name}`,
-            `Chat-Group-Member-Removed: ${removedEmail}`,
-            ...(isBroadcast ? [`Chat-Group-Is-Broadcast: 1`] : []),
-            ...(fprHeader ? [fprHeader] : []),
-            ctx.buildAutocryptHeader(),
-            `Content-Type: multipart/encrypted; protocol="application/pgp-encrypted"; boundary="${encBoundary}"`,
-            `MIME-Version: 1.0`,
-            '',
-            `--${encBoundary}`,
-            `Content-Type: application/pgp-encrypted`,
-            `Content-Description: PGP/MIME version identification`,
-            '',
-            `Version: 1`,
-            '',
-            `--${encBoundary}`,
-            `Content-Type: application/octet-stream; name="encrypted.asc"`,
-            `Content-Description: OpenPGP encrypted message`,
-            `Content-Disposition: inline; filename="encrypted.asc"`,
-            '',
+            toHeader: toList,
+            msgId,
+            date: now,
+            subject: group.name,
+            outerHeaders: [
+                `Chat-Group-ID: ${group.grpId}`,
+                `Chat-List-Id: ${listId}`,
+                `Chat-Group-Name: ${group.name}`,
+                `Chat-Group-Member-Removed: ${removedEmail}`,
+                ...(isBroadcast ? [`Chat-Group-Is-Broadcast: 1`] : []),
+                ...(fprHeader ? [fprHeader] : [])
+            ],
+            autocryptHeader: ctx.buildAutocryptHeader(),
             armored,
-            '',
-            `--${encBoundary}--`
-        ].join('\r\n');
+        });
 
         await ctx.sendRaw(ctx.credentials.email, [recipient], rawEmail);
     }
@@ -652,39 +618,22 @@ export async function renameGroup(
         ].join('\r\n');
 
         const armored = await ctx.encryptRaw(innerMime, peerKey);
-        const encBoundary = `encrypted-${crypto.randomUUID().slice(0, 8)}`;
-
-        const rawEmail = [
+        const rawEmail = buildPgpMimeEnvelope({
             fromHeader,
-            `To: ${toList}`,
-            `Date: ${now}`,
-            `Message-ID: ${msgId}`,
-            `Subject: ${newName}`,
-            `Chat-Version: 1.0`,
-            `Chat-Group-ID: ${group.grpId}`,
-            `Chat-List-Id: ${listId}`,
-            `Chat-Group-Name: ${newName}`,
-            `Chat-Group-Name-Changed: ${oldName}`,
-            ...(isBroadcast ? [`Chat-Group-Is-Broadcast: 1`] : []),
-            ctx.buildAutocryptHeader(),
-            `Content-Type: multipart/encrypted; protocol="application/pgp-encrypted"; boundary="${encBoundary}"`,
-            `MIME-Version: 1.0`,
-            '',
-            `--${encBoundary}`,
-            `Content-Type: application/pgp-encrypted`,
-            `Content-Description: PGP/MIME version identification`,
-            '',
-            `Version: 1`,
-            '',
-            `--${encBoundary}`,
-            `Content-Type: application/octet-stream; name="encrypted.asc"`,
-            `Content-Description: OpenPGP encrypted message`,
-            `Content-Disposition: inline; filename="encrypted.asc"`,
-            '',
+            toHeader: toList,
+            msgId,
+            date: now,
+            subject: newName,
+            outerHeaders: [
+                `Chat-Group-ID: ${group.grpId}`,
+                `Chat-List-Id: ${listId}`,
+                `Chat-Group-Name: ${newName}`,
+                `Chat-Group-Name-Changed: ${oldName}`,
+                ...(isBroadcast ? [`Chat-Group-Is-Broadcast: 1`] : [])
+            ],
+            autocryptHeader: ctx.buildAutocryptHeader(),
             armored,
-            '',
-            `--${encBoundary}--`
-        ].join('\r\n');
+        });
 
         await ctx.sendRaw(ctx.credentials.email, [recipient], rawEmail);
     }
@@ -741,40 +690,23 @@ export async function updateGroupDescription(
         ].join('\r\n');
 
         const armored = await ctx.encryptRaw(innerMime, peerKey);
-        const encBoundary = `encrypted-${crypto.randomUUID().slice(0, 8)}`;
-
-        const rawEmail = [
+        const rawEmail = buildPgpMimeEnvelope({
             fromHeader,
-            `To: ${toList}`,
-            `Date: ${now}`,
-            `Message-ID: ${msgId}`,
-            `Subject: ${group.name}`,
-            `Chat-Version: 1.0`,
-            `Chat-Group-ID: ${group.grpId}`,
-            `Chat-List-Id: ${listId}`,
-            `Chat-Group-Name: ${group.name}`,
-            `Chat-Group-Description: ${newDescription}`,
-            ...(oldDescription ? [`Chat-Group-Description-Changed: ${oldDescription}`] : []),
-            ...(isBroadcast ? [`Chat-Group-Is-Broadcast: 1`] : []),
-            ctx.buildAutocryptHeader(),
-            `Content-Type: multipart/encrypted; protocol="application/pgp-encrypted"; boundary="${encBoundary}"`,
-            `MIME-Version: 1.0`,
-            '',
-            `--${encBoundary}`,
-            `Content-Type: application/pgp-encrypted`,
-            `Content-Description: PGP/MIME version identification`,
-            '',
-            `Version: 1`,
-            '',
-            `--${encBoundary}`,
-            `Content-Type: application/octet-stream; name="encrypted.asc"`,
-            `Content-Description: OpenPGP encrypted message`,
-            `Content-Disposition: inline; filename="encrypted.asc"`,
-            '',
+            toHeader: toList,
+            msgId,
+            date: now,
+            subject: group.name,
+            outerHeaders: [
+                `Chat-Group-ID: ${group.grpId}`,
+                `Chat-List-Id: ${listId}`,
+                `Chat-Group-Name: ${group.name}`,
+                `Chat-Group-Description: ${newDescription}`,
+                ...(oldDescription ? [`Chat-Group-Description-Changed: ${oldDescription}`] : []),
+                ...(isBroadcast ? [`Chat-Group-Is-Broadcast: 1`] : [])
+            ],
+            autocryptHeader: ctx.buildAutocryptHeader(),
             armored,
-            '',
-            `--${encBoundary}--`
-        ].join('\r\n');
+        });
 
         await ctx.sendRaw(ctx.credentials.email, [recipient], rawEmail);
     }
@@ -855,34 +787,16 @@ export async function resendMessage(
         from: ctx.credentials.email,
         to: toEmail,
     });
-    const encBoundary = `encrypted-${crypto.randomUUID().slice(0, 8)}`;
-
-    const rawEmail = [
+    const rawEmail = buildPgpMimeEnvelope({
         fromHeader,
-        `To: <${toEmail}>`,
-        `Date: ${now}`,
-        `Message-ID: ${msgId}`,
-        `Subject: [...]`,
-        `Chat-Version: 1.0`,
-        ctx.buildAutocryptHeader(),
-        `Content-Type: multipart/encrypted; protocol="application/pgp-encrypted"; boundary="${encBoundary}"`,
-        `MIME-Version: 1.0`,
-        '',
-        `--${encBoundary}`,
-        `Content-Type: application/pgp-encrypted`,
-        `Content-Description: PGP/MIME version identification`,
-        '',
-        `Version: 1`,
-        '',
-        `--${encBoundary}`,
-        `Content-Type: application/octet-stream; name="encrypted.asc"`,
-        `Content-Description: OpenPGP encrypted message`,
-        `Content-Disposition: inline; filename="encrypted.asc"`,
-        '',
+        toHeader: `<${toEmail}>`,
+        msgId,
+        date: now,
+        subject: '[...]',
+        outerHeaders: [],
+        autocryptHeader: ctx.buildAutocryptHeader(),
         armored,
-        '',
-        `--${encBoundary}--`
-    ].join('\r\n');
+    });
 
     await ctx.sendRaw(ctx.credentials.email, [toEmail], rawEmail);
     log.info('group', `Resent message to ${toEmail} [${msgId}]`);
