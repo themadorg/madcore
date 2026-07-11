@@ -1,11 +1,23 @@
 # Publish to npmjs.com and GitHub Packages after a GitHub Release is published.
 #
-# Prerequisites
-#   • Repository secret NPM_TOKEN — npm automation/publish token with write access
-#   • package.json "version" must match the release tag (e.g. v2.0.0 → 2.0.0)
-#   • GitHub Packages publishes as @<owner>/madcore (scoped); npm keeps madcore
+# npm (Trusted Publishing / OIDC) — no NPM_TOKEN secret
+#   • package.json "version" must match the release tag (e.g. v1.0.1 → 1.0.1)
+#   • Configure Trusted Publisher on npmjs.com for package "madcore":
+#       Organization or user: themadorg
+#       Repository:           madcore
+#       Workflow filename:    publish.yml
+#       Allowed actions:      npm publish
+#   • First-ever version: the package must already exist on npm before OIDC
+#     can be configured. Bootstrap once from a trusted machine:
+#       npm login && npm publish --access public
+#     Then add the Trusted Publisher above for all later releases.
+#   • Requires npm CLI ≥ 11.5.1 and Node ≥ 22.14 (OIDC in the CLI)
+#   • Provenance is generated automatically with trusted publishing
 #
-# Manual re-run: Actions → Publish → Run workflow (uses latest release tag or input)
+# GitHub Packages
+#   • Publishes as @<owner>/madcore using GITHUB_TOKEN
+#
+# Manual re-run: Actions → Publish → Run workflow
 name: Publish
 
 on:
@@ -14,7 +26,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Git tag to publish (e.g. v2.0.0). Leave empty to use package.json version.'
+        description: 'Git tag to publish (e.g. v1.0.1). Leave empty to use package.json version.'
         required: false
         type: string
 
@@ -25,7 +37,7 @@ concurrency:
 permissions:
   contents: read
   packages: write
-  id-token: write   # npm provenance
+  id-token: write   # OIDC for npm trusted publishing + provenance
 
 jobs:
   # ── Guard: CI-equivalent checks before any publish ─────────────────────────
@@ -89,12 +101,15 @@ jobs:
           path: dist/
           retention-days: 7
 
-  # ── npmjs.com ──────────────────────────────────────────────────────────────
+  # ── npmjs.com (Trusted Publishing via OIDC) ────────────────────────────────
   publish-npm:
     name: Publish to npm
     needs: check
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write   # required for OIDC exchange with registry.npmjs.org
 
     steps:
       - name: Checkout
@@ -107,21 +122,47 @@ jobs:
         with:
           bun-version: latest
 
-      - name: Setup Node (npm registry auth)
+      - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          # Trusted publishing needs Node ≥ 22.14 and npm ≥ 11.5.1
+          node-version: '24'
           registry-url: 'https://registry.npmjs.org'
+
+      - name: Ensure npm supports OIDC trusted publishing
+        run: |
+          set -euo pipefail
+          npm install -g npm@latest
+          node -v
+          NPM_VERSION=$(npm -v)
+          echo "npm version: $NPM_VERSION"
+          # Fail fast if npm is still too old for trusted publishing (≥ 11.5.1)
+          node -e "
+            const [maj, min, pat] = process.argv[1].split('.').map(Number);
+            const ok = maj > 11 || (maj === 11 && (min > 5 || (min === 5 && pat >= 1)));
+            if (!ok) {
+              console.error('npm >= 11.5.1 required for trusted publishing, got', process.argv[1]);
+              process.exit(1);
+            }
+          " "$NPM_VERSION"
 
       - name: Install & build
         run: |
           bun install --frozen-lockfile
           bun run build
 
-      - name: Publish to npm
-        run: npm publish --access public --provenance
+      # OIDC auth: do NOT set NODE_AUTH_TOKEN. A non-empty token forces token
+      # auth and blocks trusted publishing. setup-node may leave a placeholder
+      # in .npmrc; clearing the env var lets npm use the GitHub OIDC token.
+      - name: Publish to npm (OIDC trusted publishing)
+        run: |
+          set -euo pipefail
+          unset NODE_AUTH_TOKEN || true
+          npm publish --access public
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          # Explicitly empty so setup-node's ${NODE_AUTH_TOKEN} .npmrc line
+          # cannot override OIDC
+          NODE_AUTH_TOKEN: ''
 
   # ── GitHub Packages (@owner/madcore) ───────────────────────────────────
   publish-github-packages:
