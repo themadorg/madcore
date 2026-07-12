@@ -33,7 +33,8 @@ export async function runMessagingReceiveSuite(
     await tryMethod('recv/image receive', async () => {
         const msg = await imgWait;
         if (!msg?.text?.includes(imgMarker)) throw new Error('caption missing on image');
-        return msg.type;
+        const kind = msg.type || msg.viewtype || 'unknown';
+        return String(kind);
     });
 
     await sleep(1500);

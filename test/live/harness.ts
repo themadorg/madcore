@@ -133,7 +133,11 @@ export function waitForIncomingMsg(
             const msg = e.msg;
             if (!msg) return;
             if (opts.fromEmail && msg.from?.toLowerCase() !== opts.fromEmail.toLowerCase()) return;
-            if (opts.type && msg.type !== opts.type) return;
+            if (opts.type) {
+                const storeType = msg.type
+                    || (msg.viewtype ? String(msg.viewtype).toLowerCase() : undefined);
+                if (storeType !== opts.type) return;
+            }
             if (opts.textIncludes && !msg.text?.includes(opts.textIncludes)) return;
             clearTimeout(timer);
             account.off('DC_EVENT_INCOMING_MSG', handler);

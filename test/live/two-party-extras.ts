@@ -29,6 +29,10 @@ export async function runJoinGroupSuite(alice: LiveAccount, bob: LiveAccount) {
 
     await sleep(2000);
 
+    const bEmail = bob.getCredentials().email;
+    await tryMethod('addGroupMember after join', () =>
+        alice.addGroupMember(group, { email: bEmail }));
+
     await tryMethod('sendGroupMessage after join', () =>
         alice.sendGroupMessage(group, { text: `joined group e2e ${Date.now()}` }));
 }
