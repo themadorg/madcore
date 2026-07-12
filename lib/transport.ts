@@ -159,6 +159,14 @@ export class Transport {
         if (this.ws) this.ws.close();
 
         return new Promise((resolve, reject) => {
+            let settled = false;
+            const done = (err?: Error) => {
+                if (settled) return;
+                settled = true;
+                if (err) reject(err);
+                else resolve();
+            };
+
             let url: string;
             if (this.serverUrl) {
                 const wsProto = this.serverUrl.startsWith('https') ? 'wss' : 'ws';
@@ -175,7 +183,35 @@ export class Transport {
 
             this.ws!.onopen = () => {
                 log.info('transport', 'WebSocket connected');
-                resolve();
+                // Madmail often accepts the WS upgrade then closes invalid sessions.
+                // Prove credentials with a real mailbox list before treating as connected.
+                const req_id = String(++this.reqCounter);
+                const authTimer = setTimeout(() => {
+                    done(new Error('Webimap auth timeout'));
+                    try { this.ws?.close(); } catch { /* ignore */ }
+                }, 12_000);
+                this.pendingRequests.set(req_id, {
+                    resolve: () => {
+                        clearTimeout(authTimer);
+                        log.info('transport', 'Webimap auth ok');
+                        done();
+                    },
+                    reject: (err: Error) => {
+                        clearTimeout(authTimer);
+                        try { this.ws?.close(); } catch { /* ignore */ }
+                        done(err instanceof Error ? err : new Error(String(err)));
+                    },
+                });
+                try {
+                    this.ws!.send(JSON.stringify({
+                        req_id,
+                        action: 'list_messages',
+                        data: { mailbox: 'INBOX', since_uid: sinceUID },
+                    }));
+                } catch (e: any) {
+                    clearTimeout(authTimer);
+                    done(e instanceof Error ? e : new Error(String(e)));
+                }
             };
 
             this.ws!.onmessage = (event: any) => {
@@ -208,7 +244,7 @@ export class Transport {
 
             this.ws!.onerror = (e: any) => {
                 log.error('transport', 'WS error:', e.message || e);
-                reject(e);
+                done(new Error(e?.message || 'WebSocket error'));
             };
 
             this.ws!.onclose = () => {
@@ -217,6 +253,7 @@ export class Transport {
                     p.reject(new Error('WebSocket closed'));
                 }
                 this.pendingRequests.clear();
+                done(new Error('Webimap login failed: invalid email/password or connection closed'));
             };
         });
     }

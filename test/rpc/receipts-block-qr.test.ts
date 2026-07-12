@@ -156,3 +156,28 @@ describe('checkQr', () => {
         expect(p.auth).toBe('ss');
     });
 });
+
+describe('dclogin parse (madmail IP form)', () => {
+    it('strips path slash before query in check_qr / add_transport_from_qr path', async () => {
+        const { createJsonRpcCompat, DeltaChatSDK } = await import('../../sdk');
+        const { MemoryStore } = await import('../../store');
+        const sdk = DeltaChatSDK({ store: new MemoryStore(), logLevel: 'none' });
+        const rpc = createJsonRpcCompat(sdk, { defaultServerUrl: '', softStubs: true });
+        const uri =
+            'dclogin:user%2Btag@[203.0.113.9]/?p=secretpass&v=1&ih=203.0.113.9&ip=993&is=ssl&sh=203.0.113.9&sp=465&ss=ssl&ic=3';
+        const qr = await rpc.handleRpc('check_qr', [0, uri]);
+        expect(qr.kind).toBe('login');
+        // No trailing slash; percent-decoding applied
+        expect(qr.address).toBe('user+tag@[203.0.113.9]');
+        expect(qr.address.endsWith('/')).toBe(false);
+    });
+
+    it('rejects missing password', async () => {
+        const { createJsonRpcCompat, DeltaChatSDK } = await import('../../sdk');
+        const { MemoryStore } = await import('../../store');
+        const sdk = DeltaChatSDK({ store: new MemoryStore(), logLevel: 'none' });
+        const rpc = createJsonRpcCompat(sdk, { defaultServerUrl: '', softStubs: true });
+        const qr = await rpc.handleRpc('check_qr', [0, 'dclogin:a@b.c/?v=1']);
+        expect(qr.kind).toBe('error');
+    });
+});

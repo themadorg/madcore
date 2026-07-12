@@ -18,8 +18,9 @@ export async function generateKeys(email: string, name?: string): Promise<{
     autocryptKeydata: string;
     armoredPublicKey: string;
 }> {
-    // OpenPGP.js rejects bracket-wrapped IP domains — strip for key gen
-    const pgpEmail = email.replace(/\[([^\]]+)\]/, '$1');
+    // OpenPGP.js rejects bracket-wrapped IP domains and trailing path junk
+    // (madmail dclogin URIs look like user@[1.2.3.4]/?p=… — address must not keep `/`).
+    const pgpEmail = email.replace(/\[([^\]]+)\]/g, '$1').replace(/\/+$/, '').trim();
     const { privateKey, publicKey } = await openpgp.generateKey({
         type: 'ecc',
         curve: 'curve25519' as any,

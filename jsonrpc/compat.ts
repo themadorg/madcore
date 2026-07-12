@@ -192,6 +192,64 @@ function normalizeServerUrl(input: string, fallback: string): string {
     return url.replace(/\/+$/, '');
 }
 
+/**
+ * Parse `dclogin:` login QR / URI (https://github.com/deltachat/interface).
+ *
+ * Madmail/chatmail often emit a trailing path slash before the query, e.g.
+ *   dclogin:user@[1.2.3.4]/?p=secret&v=1&ih=1.2.3.4&…
+ * Real core strips that path by splitting on `?` or `/`. Keeping the `/` in the
+ * address breaks OpenPGP keygen (`user@host/` is not a valid email) and login.
+ */
+function parseDclogin(raw: string): {
+    address: string
+    password: string
+    serverUrl: string
+    params: URLSearchParams
+} {
+    const normalized = raw.trim().replace(/^dclogin:\/\//i, 'dclogin:')
+    if (!/^dclogin:/i.test(normalized)) {
+        throw new RpcError('Invalid dclogin')
+    }
+    const payload = normalized.replace(/^dclogin:/i, '')
+    // Core: addr = payload.split(['?', '/']).next()
+    const addrEnd = payload.search(/[?/]/)
+    const addressRaw = (addrEnd >= 0 ? payload.slice(0, addrEnd) : payload).trim()
+    let address: string
+    try {
+        address = decodeURIComponent(addressRaw)
+    } catch {
+        address = addressRaw
+    }
+    // Defense: strip accidental trailing path separators
+    address = address.replace(/\/+$/, '')
+    if (!address || !address.includes('@')) {
+        throw new RpcError('Invalid dclogin address')
+    }
+
+    const q = payload.indexOf('?')
+    const params = new URLSearchParams(q >= 0 ? payload.slice(q + 1) : '')
+    const password = params.get('p') || params.get('ipw') || ''
+    if (!password) {
+        throw new RpcError('Invalid dclogin: password missing')
+    }
+
+    const hostRaw =
+        params.get('ih') ||
+        params.get('sh') ||
+        address.split('@').pop() ||
+        ''
+    const host = hostRaw.replace(/^\[|\]$/g, '').replace(/\/+$/, '')
+    if (!host) {
+        throw new RpcError('Invalid dclogin: host missing')
+    }
+    return {
+        address,
+        password,
+        serverUrl: `https://${host}`,
+        params,
+    }
+}
+
 async function createQrSvg(content: string): Promise<string> {
     return QRCode.toString(content, {
         type: 'svg',
@@ -225,7 +283,8 @@ export class DeltaChatJsonRpc {
 
     constructor(sdk?: IDeltaChatManager, options: JsonRpcCompatOptions = {}) {
         this.sdk = sdk ?? DeltaChatSDK({ logLevel: 'info' });
-        this.defaultServerUrl = (options.defaultServerUrl || 'https://nine.testrun.org').replace(/\/+$/, '');
+        // Use nullish coalesce so an explicit empty string (madweb: user picks server) is kept.
+        this.defaultServerUrl = String(options.defaultServerUrl ?? 'https://nine.testrun.org').replace(/\/+$/, '');
         this.onEvent = options.onEvent;
         this.softStubs = options.softStubs !== false;
         this.onCredentialsSaved = options.onCredentialsSaved;
@@ -1509,16 +1568,23 @@ export class DeltaChatJsonRpc {
         this.emit(accountId, { kind: 'ConfigureProgress', progress: 100, comment: 'Parsing…' });
 
         if (/^dclogin:/i.test(raw)) {
-            // dclogin:user@host?p=pass&ih=host
-            const m = raw.match(/^dclogin:(.+)$/i);
-            if (!m) throw new RpcError('Invalid dclogin');
-            const rest = m[1];
-            const q = rest.indexOf('?');
-            const address = q >= 0 ? rest.slice(0, q) : rest;
-            const params = new URLSearchParams(q >= 0 ? rest.slice(q + 1) : '');
-            const password = params.get('p') || '';
-            const host = params.get('ih') || params.get('sh') || address.split('@').pop()?.replace(/^\[|\]$/g, '') || '';
-            await this.configureCredentials(accountId, address, password, `https://${host}`);
+            const { address, password, serverUrl } = parseDclogin(raw);
+            this.emit(accountId, {
+                kind: 'ConfigureProgress',
+                progress: 300,
+                comment: `Logging in as ${address}…`,
+            });
+            try {
+                await this.configureCredentials(accountId, address, password, serverUrl);
+            } catch (e: any) {
+                const msg = e?.message || String(e);
+                this.emit(accountId, {
+                    kind: 'ConfigureProgress',
+                    progress: 0,
+                    comment: `Login failed: ${msg}`,
+                });
+                throw new RpcError(`dclogin failed for ${address}: ${msg}`);
+            }
             return;
         }
 
@@ -1585,11 +1651,20 @@ export class DeltaChatJsonRpc {
 
     private async configureCredentials(accountId: number, email: string, password: string, serverUrl: string) {
         const slot = this.slot(accountId);
+        // Normalize addr: madmail IP form may arrive with trailing `/` or spaces
+        email = String(email || '').trim().replace(/\/+$/, '');
+        password = String(password || '');
+        serverUrl = normalizeServerUrl(serverUrl, this.defaultServerUrl);
+        if (!email || !password) throw new RpcError('addr and password required');
+        if (!serverUrl) throw new RpcError('server URL required');
         const name = slot.config.displayname?.trim() || email.split('@')[0] || `User ${accountId}`;
         let acc = this.sdk.findAccountByEmail(email);
         if (!acc) {
             acc = this.sdk.addAccount(email, password, serverUrl);
             await acc.loadFromStore();
+        } else {
+            // Existing store slot: refresh password / server for re-login
+            acc.setCredentials(email, password, serverUrl);
         }
         if (!acc.getFingerprint()) await acc.generateKeys(name);
         slot.account = acc;
@@ -2303,7 +2378,12 @@ export class DeltaChatJsonRpc {
             return { kind: 'account', domain };
         }
         if (lower.startsWith('dclogin:')) {
-            return { kind: 'login', address: trimmed.slice('dclogin:'.length).split('?')[0] };
+            try {
+                const { address } = parseDclogin(trimmed);
+                return { kind: 'login', address };
+            } catch (e: any) {
+                return { kind: 'error', error: e?.message || 'Invalid dclogin' };
+            }
         }
         if (lower.startsWith('dcbackup:') || lower.startsWith('dcbk:')) return { kind: 'backup2' };
         if (lower.startsWith('http://') || lower.startsWith('https://')) return { kind: 'url', url: trimmed };
