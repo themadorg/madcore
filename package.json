@@ -68,7 +68,10 @@
     "test:join-group": "bun run test/join-group.ts",
     "test:channel": "bun run test/interactive-channel.ts",
     "test:live": "bun run test/live-madmail.ts",
-    "test:live-full": "bun run test/live/run.ts"
+    "test:live-full": "bun run test/live/run.ts",
+    "test:ci-smoke": "bun run test/ci/smoke.ts",
+    "test:ci-e2e": "bun run test/ci/run.ts",
+    "test:e2e:madmail": "bash scripts/ci/start-madmail.sh && SERVER_URL=http://127.0.0.1:8080 bun run test:ci-e2e; bash scripts/ci/stop-madmail.sh"
   },
   "dependencies": {
     "openpgp": "^6.0.1"
