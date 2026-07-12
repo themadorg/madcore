@@ -49,7 +49,7 @@ jobs:
 
       - name: Smoke tests
         env:
-          SERVER_URL: http://127.0.0.1:8080
+          SERVER_URL: https://127.0.0.1:8443
           NODE_TLS_REJECT_UNAUTHORIZED: "0"
         run: bun run test:ci-smoke
 
@@ -87,7 +87,7 @@ jobs:
 
       - name: Full E2E tests
         env:
-          SERVER_URL: http://127.0.0.1:8080
+          SERVER_URL: https://127.0.0.1:8443
           NODE_TLS_REJECT_UNAUTHORIZED: "0"
           JOIN_TIMEOUT_MS: "120000"
         run: bun run test:ci-e2e
