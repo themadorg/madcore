@@ -365,6 +365,7 @@ export async function sendSecureJoinAuthRequired(
         const innerMime = [
             `Content-Type: text/plain; charset="utf-8"; protected-headers="v1"; hp="cipher"`,
             `Secure-Join: ${step}`,
+            `Secure-Join-Fingerprint: ${ctx.fingerprint}`,
             protectedFrom,
             `To: <${toAddr}>`,
             `Date: ${now}`,
@@ -383,7 +384,10 @@ export async function sendSecureJoinAuthRequired(
             msgId,
             date: now,
             subject: '[...]',
-            outerHeaders: [`Secure-Join: ${step}`],
+            outerHeaders: [
+                `Secure-Join: ${step}`,
+                `Secure-Join-Fingerprint: ${ctx.fingerprint}`,
+            ],
             autocryptHeader,
             armored,
         });
@@ -412,6 +416,7 @@ export async function sendSecureJoinAuthRequired(
         `Subject: [...]`,
         `Chat-Version: 1.0`,
         `Secure-Join: ${step}`,
+        `Secure-Join-Fingerprint: ${ctx.fingerprint}`,
         ctx.buildAutocryptHeader(),
         `Content-Type: text/plain; charset=utf-8`,
         `MIME-Version: 1.0`,

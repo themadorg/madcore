@@ -117,14 +117,39 @@ export abstract class AccountBase {
     /** Backward-compat: primary server URL */
     get serverUrl(): string { return this.primaryRelay.serverUrl; }
 
-    /** Get the primary transport (first connected, or only one) */
-    get transport(): Transport {
-        const t = this.transports.get(this.primaryRelay.serverUrl);
+    /** Resolve transport for the primary relay (normalized serverUrl keys). */
+    protected getPrimaryTransport(): Transport {
+        const url = normalizeServerUrl(this.primaryRelay.serverUrl);
+        let t = this.transports.get(url);
+        if (!t) {
+            for (const [k, tr] of this.transports) {
+                if (normalizeServerUrl(k) === url) {
+                    t = tr;
+                    break;
+                }
+            }
+        }
         if (t) return t;
-        // Fallback: return first transport or throw
         const first = this.transports.values().next().value;
         if (first) return first;
         throw new Error('No transports connected. Call connect() first.');
+    }
+
+    /** @deprecated Prefer getPrimaryTransport() */
+    get transport(): Transport {
+        return this.getPrimaryTransport();
+    }
+
+    /** Re-open WS if the primary transport dropped (long SecureJoin / idle). */
+    protected async ensureTransportConnected(): Promise<void> {
+        if (this.transports.size === 0) {
+            await this.connect();
+            return;
+        }
+        const t = this.getPrimaryTransport();
+        if (!t.isConnected) {
+            await this.connect();
+        }
     }
 
     /**
@@ -138,13 +163,13 @@ export abstract class AccountBase {
         this.store = store;
         this.id = id || generateAccountId();
         if (email && password && serverUrl) {
+            const url = normalizeServerUrl(serverUrl);
             const relayId = generateAccountId();
-            this.relays.set(relayId, { id: relayId, serverUrl, email, password });
+            this.relays.set(relayId, { id: relayId, serverUrl: url, email, password });
             this.primaryRelayId = relayId;
-            // Create initial transport
             const t = new Transport();
-            t.configure(serverUrl, { email, password });
-            this.transports.set(serverUrl, t);
+            t.configure(url, { email, password });
+            this.transports.set(url, t);
         }
         // Bridge logger → DC_EVENT_INFO / WARNING / ERROR (browser-safe)
         this.logUnsub = addLogSink((level, tag, msg) => {
@@ -203,7 +228,8 @@ export abstract class AccountBase {
 
     /** Send raw message via primary transport (or first available) */
     protected async sendViaTransport(from: string, to: string[], body: string): Promise<void> {
-        return this.transport.send(from, to, body);
+        await this.ensureTransportConnected();
+        return this.getPrimaryTransport().send(from, to, body);
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -213,11 +239,12 @@ export abstract class AccountBase {
     /** Register a new account on the given server (standalone usage) */
     async register(serverUrl: string, options?: { token?: string }): Promise<Credentials & { dclogin_url?: string }> {
         const t = new Transport();
-        const creds = await t.register(serverUrl, options);
-        t.configure(serverUrl, creds);
-        this.transports.set(serverUrl, t);
+        const url = normalizeServerUrl(serverUrl);
+        const creds = await t.register(url, options);
+        t.configure(url, creds);
+        this.transports.set(url, t);
         const relayId = generateAccountId();
-        this.relays.set(relayId, { id: relayId, serverUrl, email: creds.email, password: creds.password });
+        this.relays.set(relayId, { id: relayId, serverUrl: url, email: creds.email, password: creds.password });
         if (!this.primaryRelayId) this.primaryRelayId = relayId;
         if (this.store instanceof IndexedDBStore) {
             this.store.reopenForAccount(creds.email);
@@ -597,11 +624,10 @@ export abstract class AccountBase {
     async connect(serverUrlOrSinceUID?: string | number, sinceUID = 0): Promise<void> {
         let targetUrl: string;
         if (typeof serverUrlOrSinceUID === 'number') {
-            // Legacy call: connect(sinceUID)
-            targetUrl = this.primaryRelay.serverUrl;
             sinceUID = serverUrlOrSinceUID;
+            targetUrl = normalizeServerUrl(this.primaryRelay.serverUrl);
         } else {
-            targetUrl = serverUrlOrSinceUID || this.primaryRelay.serverUrl;
+            targetUrl = normalizeServerUrl(serverUrlOrSinceUID || this.primaryRelay.serverUrl);
         }
 
         // Default sinceUID from persisted mailbox cursor (reconnect sync)
@@ -614,13 +640,23 @@ export abstract class AccountBase {
         // Find the relay credentials for this server URL
         let relayCreds: Credentials = this.credentials;
         for (const [, r] of this.relays) {
-            if (r.serverUrl === targetUrl) {
+            if (normalizeServerUrl(r.serverUrl) === targetUrl) {
                 relayCreds = { email: r.email, password: r.password };
                 break;
             }
         }
 
         let t = this.transports.get(targetUrl);
+        if (!t) {
+            for (const [k, tr] of this.transports) {
+                if (normalizeServerUrl(k) === targetUrl) {
+                    t = tr;
+                    this.transports.delete(k);
+                    this.transports.set(targetUrl, tr);
+                    break;
+                }
+            }
+        }
         if (!t) {
             t = new Transport();
             t.configure(targetUrl, relayCreds);
@@ -654,8 +690,17 @@ export abstract class AccountBase {
 
     /** Get a specific transport by server URL */
     getTransport(serverUrl: string): Transport {
-        const t = this.transports.get(serverUrl);
-        if (!t) throw new Error(`No transport for ${serverUrl}. Call connect('${serverUrl}') first.`);
+        const url = normalizeServerUrl(serverUrl);
+        let t = this.transports.get(url);
+        if (!t) {
+            for (const [k, tr] of this.transports) {
+                if (normalizeServerUrl(k) === url) {
+                    t = tr;
+                    break;
+                }
+            }
+        }
+        if (!t) throw new Error(`No transport for ${url}. Call connect('${url}') first.`);
         return t;
     }
 
@@ -965,13 +1010,19 @@ export abstract class AccountBase {
 
     /** Handle a WS push message (new_message) */
     protected async handlePushMessage(summary: any): Promise<void> {
-        // Dedup is handled inside processIncomingRaw
+        if (this.transports.size === 0) return;
+        let t: Transport;
+        try {
+            t = this.getPrimaryTransport();
+        } catch {
+            return;
+        }
         let raw: IncomingMessage;
         try {
-            const detail = await this.transport.wsRequest('fetch', { uid: summary.uid });
+            const detail = await t.wsRequest('fetch', { uid: summary.uid });
             raw = { uid: detail.uid, body: detail.body, envelope: detail.envelope };
         } catch {
-            raw = await this.transport.fetchMessage(summary.uid);
+            raw = await t.fetchMessage(summary.uid);
         }
 
         await this.processIncomingRaw(raw);

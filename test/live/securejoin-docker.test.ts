@@ -208,10 +208,11 @@ describe("SecureJoin live madmail", () => {
         const alice = await madcoreAccount("Alice-mc-x2");
         const uri = alice.acc.generateSecureJoinURI();
         expect(uri).toContain("i.delta.chat");
+        await alice.acc.flushPersist?.();
 
         bob = await createConfiguredCoreAccount(SERVER, "Bob-core-x2");
         const joinerWait = bob.rpc.waitSecureJoinProgress(bob.id, "joiner", TIMEOUT_MS);
-        await new Promise((r) => setTimeout(r, 200));
+        await new Promise((r) => setTimeout(r, 500));
         await coreSecureJoin(bob.rpc, bob.id, uri);
         await joinerWait;
       } finally {

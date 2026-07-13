@@ -75,6 +75,13 @@ export class Transport {
 
     /** Send a raw email. Transparent WS→REST fallback. */
     async send(from: string, to: string[], body: string): Promise<void> {
+        if (!this.isConnected && this.serverUrl && this.credentials.email) {
+            try {
+                await this.connect(0);
+            } catch {
+                /* fall through to REST */
+            }
+        }
         if (this.isConnected) {
             const result = await this.wsRequest('send', { from, to, body });
             log.info(
@@ -216,6 +223,7 @@ export class Transport {
 
     /** Disconnect WebSocket */
     disconnect() {
+        this.onPush = null;
         this.ws?.close();
         this.ws = null;
         for (const [, p] of this.pendingRequests) {

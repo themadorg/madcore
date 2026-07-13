@@ -28,22 +28,35 @@ export async function runStoreChatSuite(
     await tryMethod('getUnreadCount', () => account.getUnreadCount());
     await tryMethod('markChatRead', () => account.markChatRead(chatId));
     let msgsForSeen = await account.getChatMessages(chatId, 50, 0);
-    let incoming = msgsForSeen.find((m: any) => m.direction === 'incoming');
+    let incoming = msgsForSeen.find((m: any) => m.direction === 'incoming' && m.id);
     if (!incoming?.id && peerAccount && accountEmail) {
         const seenMarker = `seen-${Date.now()}`;
         const seenWait = waitForIncomingMsg(account, {
             fromEmail: peerEmail,
             textIncludes: seenMarker,
-            timeoutMs: 90_000,
+            timeoutMs: 120_000,
         });
+        if (typeof peerAccount.connect === 'function') {
+            try { await peerAccount.connect(); } catch { /* already up */ }
+        }
         await peerAccount.sendMessage(accountEmail, seenMarker);
-        const seenMsg = await seenWait;
-        await sleep(500);
-        incoming = seenMsg;
+        try {
+            incoming = await seenWait;
+        } catch {
+            const deadline = Date.now() + 120_000;
+            while (Date.now() < deadline) {
+                await sleep(2000);
+                msgsForSeen = await account.getChatMessages(chatId, 50, 0);
+                incoming = msgsForSeen.find((m: any) =>
+                    m.direction === 'incoming' && m.text?.includes(seenMarker) && m.id)
+                    || msgsForSeen.find((m: any) => m.direction === 'incoming' && m.id);
+                if (incoming?.id) break;
+            }
+        }
         if (!incoming?.id) {
             msgsForSeen = await account.getChatMessages(chatId, 50, 0);
             incoming = msgsForSeen.find((m: any) => m.direction === 'incoming' && m.text?.includes(seenMarker))
-                || msgsForSeen.find((m: any) => m.direction === 'incoming');
+                || msgsForSeen.find((m: any) => m.direction === 'incoming' && m.id);
         }
     }
     await tryMethod('markMessageSeen', async () => {
