@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'bun:test';
 import * as openpgp from 'openpgp';
-import { encryptSymmetricSecureJoinRpgp } from '../../lib/pgp-rpgp-symm';
+import { decryptSymmetricSecureJoinRpgp, encryptSymmetricSecureJoinRpgp } from '../../lib/pgp-rpgp-symm';
 import { generateKeys, secureJoinSharedSecret } from '../../lib/crypto';
 import { buildSymmSecureJoinInnerMime } from '../../lib/mime-build';
 
@@ -41,5 +41,23 @@ describe('pgp-rpgp-symm', () => {
         const skesk = [...msg.packets].find(p => p.constructor.name === 'SymEncryptedSessionKeyPacket');
         expect(skesk).toBeDefined();
         expect((skesk as { version?: number }).version).toBe(4);
+    });
+
+    it('decryptSymmetricSecureJoinRpgp roundtrips encrypt output', async () => {
+        const { privateKey, fingerprint } = await generateKeys('bob@test.example', 'Bob');
+        const auth = 'joiner-auth-42';
+        const secret = secureJoinSharedSecret(fingerprint, auth);
+        const inner = buildSymmSecureJoinInnerMime({
+            step: 'vc-request-pubkey',
+            auth,
+            fromAddr: 'bob@test.example',
+            msgId: '<req@example.com>',
+            date: 'Mon, 1 Jan 2024 00:00:00 GMT',
+            autocryptHeader: '',
+        });
+        const armored = await encryptSymmetricSecureJoinRpgp(inner, secret, privateKey);
+        const plain = await decryptSymmetricSecureJoinRpgp(armored, secret);
+        expect(plain).toContain('Secure-Join: vc-request-pubkey');
+        expect(plain).toContain(`Secure-Join-Auth: ${auth}`);
     });
 });

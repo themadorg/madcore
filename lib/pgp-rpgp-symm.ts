@@ -26,9 +26,31 @@ type SkeskWire = {
     sessionKeyEncryptionAlgorithm: number | null;
 };
 
+function hashAlgoName(id: number): string {
+    // rPGP / OpenPGP hash IDs we may see on the wire (SecureJoin uses SHA-256).
+    switch (id) {
+        case 2:
+            return 'SHA-1';
+        case 8:
+            return 'SHA-256';
+        case 9:
+            return 'SHA-384';
+        case 10:
+            return 'SHA-512';
+        default:
+            return 'SHA-256';
+    }
+}
+
 /** Salted S2K (RFC 4880 §3.7.1.2) — matches rPGP `StringToKey::Salted`. */
-async function saltedS2KDerive(passphrase: string, salt: Uint8Array, numBytes: number): Promise<Uint8Array> {
+async function saltedS2KDerive(
+    passphrase: string,
+    salt: Uint8Array,
+    numBytes: number,
+    hashAlgo = 8,
+): Promise<Uint8Array> {
     const pw = new TextEncoder().encode(passphrase);
+    const digestName = hashAlgoName(hashAlgo);
     const parts: Uint8Array[] = [];
     let got = 0;
     let prefix = 0;
@@ -37,7 +59,7 @@ async function saltedS2KDerive(passphrase: string, salt: Uint8Array, numBytes: n
         if (prefix > 0) buf.set(new Uint8Array(prefix), 0);
         buf.set(salt, prefix);
         buf.set(pw, prefix + salt.length);
-        const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', buf));
+        const digest = new Uint8Array(await crypto.subtle.digest(digestName, buf));
         parts.push(digest);
         got += digest.length;
         prefix++;
@@ -54,37 +76,55 @@ async function saltedS2KDerive(passphrase: string, salt: Uint8Array, numBytes: n
 }
 
 /** rPGP SKESK v4 session-key wrapping — regular AES-CFB, IV = 0 (not OpenPGP CFB). */
-async function aesCfbEncryptRegular(key: Uint8Array, plaintext: Uint8Array): Promise<Uint8Array> {
+async function aesCfbCryptRegular(
+    key: Uint8Array,
+    data: Uint8Array,
+    encrypt: boolean,
+): Promise<Uint8Array> {
     try {
-        const { createCipheriv } = await import('node:crypto');
-        const cipher = createCipheriv('aes-128-cfb', Buffer.from(key), Buffer.alloc(16, 0));
+        const { createCipheriv, createDecipheriv } = await import('node:crypto');
+        const iv = Buffer.alloc(16, 0);
+        const cipher = encrypt
+            ? createCipheriv('aes-128-cfb', Buffer.from(key), iv)
+            : createDecipheriv('aes-128-cfb', Buffer.from(key), iv);
         cipher.setAutoPadding(false);
-        return new Uint8Array(Buffer.concat([cipher.update(Buffer.from(plaintext)), cipher.final()]));
+        return new Uint8Array(Buffer.concat([cipher.update(Buffer.from(data)), cipher.final()]));
     } catch {
-        // Browser fallback: standard CFB-128 encrypt (ciphertext feedback).
+        // Browser fallback: CFB-128 (ciphertext feedback).
         const blockSize = 16;
         const iv = new Uint8Array(blockSize);
-        const out = new Uint8Array(plaintext.length);
+        const out = new Uint8Array(data.length);
         let shiftRegister = iv;
         let pos = 0;
-        while (pos < plaintext.length) {
+        while (pos < data.length) {
             const keystream = await aesEcbBlock(key, shiftRegister);
-            const n = Math.min(blockSize, plaintext.length - pos);
+            const n = Math.min(blockSize, data.length - pos);
             for (let i = 0; i < n; i++) {
-                out[pos + i] = plaintext[pos + i] ^ keystream[i];
+                out[pos + i] = data[pos + i] ^ keystream[i];
             }
             if (n === blockSize) {
-                shiftRegister = out.subarray(pos, pos + blockSize);
+                shiftRegister = new Uint8Array(
+                    encrypt ? out.subarray(pos, pos + blockSize) : data.subarray(pos, pos + blockSize),
+                );
             } else {
                 const next = new Uint8Array(blockSize);
                 next.set(shiftRegister.subarray(n));
-                next.set(out.subarray(pos, pos + n), blockSize - n);
+                const feedback = encrypt ? out.subarray(pos, pos + n) : data.subarray(pos, pos + n);
+                next.set(feedback, blockSize - n);
                 shiftRegister = next;
             }
             pos += n;
         }
         return out;
     }
+}
+
+async function aesCfbEncryptRegular(key: Uint8Array, plaintext: Uint8Array): Promise<Uint8Array> {
+    return aesCfbCryptRegular(key, plaintext, true);
+}
+
+async function aesCfbDecryptRegular(key: Uint8Array, ciphertext: Uint8Array): Promise<Uint8Array> {
+    return aesCfbCryptRegular(key, ciphertext, false);
 }
 
 async function aesEcbBlock(key: Uint8Array, block: Uint8Array): Promise<Uint8Array> {
@@ -228,17 +268,81 @@ export async function encryptSymmetricSecureJoinRpgp(
 
     const eskBytes = await buildSaltedEskPacket(sharedSecret, new Uint8Array(skesk.sessionKey), algo);
 
-    // Keep SEIPD and any trailing packets (openpgp v6 may append signature metadata after SEIPD).
-    const chunks: Uint8Array[] = [];
-    for (let i = 0; i < packets.length; i++) {
-        chunks.push(i === skeskIdx ? eskBytes : packets[i]!.packetBytes);
+    // Replace only the leading SKESK packet; preserve the rest of the binary verbatim
+    // (openpgp v6 may append metadata after SEIPD — re-parsing would corrupt SEIPD).
+    const first = parsePacket(encBinary, 0);
+    if (first.tag !== 3) {
+        throw new Error(`Expected SKESK as first packet, got tag ${first.tag}`);
     }
-    const totalLen = chunks.reduce((n, c) => n + c.length, 0);
-    const all = new Uint8Array(totalLen);
-    let pos = 0;
-    for (const c of chunks) {
-        all.set(c, pos);
-        pos += c.length;
-    }
+    const all = new Uint8Array(eskBytes.length + encBinary.length - first.next);
+    all.set(eskBytes, 0);
+    all.set(encBinary.subarray(first.next), eskBytes.length);
     return armorMessage(all);
+}
+
+function armoredToBinary(armored: string): Uint8Array {
+    const lines = armored
+        .replace(/\r/g, '')
+        .split('\n')
+        .filter(l => !l.startsWith('-----') && l.trim().length > 0);
+    const b64 = lines.join('');
+    const binary = atob(b64);
+    const out = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) out[i] = binary.charCodeAt(i);
+    return out;
+}
+
+async function unwrapSaltedSkeskBody(body: Uint8Array, sharedSecret: string): Promise<{
+    sessionKey: Uint8Array;
+    algorithm: number;
+}> {
+    if (body.length < 14 || body[0] !== 4 || body[2] !== 1) {
+        throw new Error('SKESK is not salted S2K v4');
+    }
+    const symAlgo = body[1]!;
+    const hashAlgo = body[3]!;
+    const salt = body.subarray(4, 12);
+    const encKey = body.subarray(12);
+    const derived = await saltedS2KDerive(sharedSecret, salt, 16, hashAlgo);
+    const plain = await aesCfbDecryptRegular(derived, encKey);
+    if (plain.length < 2) {
+        throw new Error('SKESK payload too short');
+    }
+    return { sessionKey: plain.subarray(1), algorithm: plain[0] ?? symAlgo };
+}
+
+/**
+ * Decrypt rPGP salted-S2K symmetric SecureJoin messages (core vc-request-pubkey / vc-pubkey).
+ * openpgp.js password decrypt often fails on rPGP's regular-AES-CFB ESK wrapping.
+ */
+export async function decryptSymmetricSecureJoinRpgp(
+    armoredMessage: string,
+    sharedSecret: string,
+): Promise<string> {
+    const decryptConfig = {
+        allowUnauthenticatedMessages: true,
+        enableParsingV5Entities: true,
+        parseAEADEncryptedV4KeysAsLegacy: true,
+    } as const;
+
+    const message = await openpgp.readMessage({
+        armoredMessage,
+        config: decryptConfig,
+    });
+
+    const bin = armoredToBinary(armoredMessage);
+    const skeskPkt = parsePacket(bin, 0);
+    if (skeskPkt.tag !== 3) {
+        throw new Error(`Expected SKESK first, got tag ${skeskPkt.tag}`);
+    }
+
+    const { sessionKey } = await unwrapSaltedSkeskBody(skeskPkt.body, sharedSecret);
+
+    const { data } = await openpgp.decrypt({
+        message,
+        sessionKeys: [{ data: sessionKey, algorithm: 'aes128' }],
+        config: decryptConfig,
+    });
+
+    return typeof data === 'string' ? data : new TextDecoder().decode(data as Uint8Array);
 }

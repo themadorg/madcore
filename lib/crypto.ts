@@ -159,6 +159,12 @@ export async function decryptSymmetricSecureJoin(
     sharedSecret: string,
 ): Promise<string> {
     const cleaned = extractArmoredPgpMessage(armoredMessage) || armoredMessage.trim();
+    try {
+        const { decryptSymmetricSecureJoinRpgp } = await import('./pgp-rpgp-symm.js');
+        return await decryptSymmetricSecureJoinRpgp(cleaned, sharedSecret);
+    } catch {
+        // Fall back to openpgp.js password decrypt (madcore-originated messages).
+    }
     const message = await openpgp.readMessage({
         armoredMessage: cleaned,
         config: DECRYPT_CONFIG,
