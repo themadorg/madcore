@@ -35,7 +35,7 @@ async function main() {
 
     const setup = await resolvePeerSetup(server, joinUri, joinTimeoutMs);
     if (!setup) {
-        summaryAndExit();
+        await summaryAndExit('ci-e2e-full');
         return;
     }
 
@@ -97,7 +97,7 @@ async function main() {
     await tryMethod('dc.findAccountByEmail', () =>
         dc.findAccountByEmail(aEmail)?.id);
 
-    summaryAndExit();
+    await summaryAndExit('ci-e2e-full');
 }
 
 main().catch(e => {

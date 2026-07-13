@@ -46,7 +46,24 @@ export async function tryMethod(method: string, fn: () => Promise<any> | any) {
     }
 }
 
-export function summaryAndExit() {
+export async function exportResults(suite: string): Promise<void> {
+    const dir = process.env.TEST_RESULTS_DIR;
+    if (!dir) return;
+    const { writeReport, buildReport } = await import('../ci/report.js');
+    const tests = rows.map(r => ({
+        name: r.method,
+        status: r.status,
+        detail: r.detail,
+    }));
+    const meta: Record<string, string> = {};
+    if (process.env.GITHUB_SHA) meta.github_sha = process.env.GITHUB_SHA;
+    if (process.env.GITHUB_RUN_ID) meta.github_run_id = process.env.GITHUB_RUN_ID;
+    if (process.env.SERVER_URL) meta.server_url = process.env.SERVER_URL;
+    const path = await writeReport(dir, buildReport(suite, tests, meta));
+    console.log(`\n📁 Wrote test report: ${path}.json / .md\n`);
+}
+
+export async function summaryAndExit(suite?: string) {
     const passN = rows.filter(r => r.status === 'pass').length;
     const failN = rows.filter(r => r.status === 'fail').length;
     const skipN = rows.filter(r => r.status === 'skip').length;
@@ -57,6 +74,13 @@ export function summaryAndExit() {
             console.log(`  - ${r.method}: ${r.detail}`);
         }
         console.log('');
+    }
+    if (suite) {
+        try {
+            await exportResults(suite);
+        } catch (e: any) {
+            console.error('Failed to write test report:', e?.message || e);
+        }
     }
     process.exit(failN > 0 ? 1 : 0);
 }

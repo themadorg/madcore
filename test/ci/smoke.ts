@@ -18,7 +18,7 @@ async function main() {
 
     const setup = await resolvePeerSetup(server, joinUri, joinTimeoutMs);
     if (!setup) {
-        summaryAndExit();
+        await summaryAndExit('ci-smoke');
         return;
     }
 
@@ -34,7 +34,7 @@ async function main() {
     a.disconnect();
     b?.disconnect();
 
-    summaryAndExit();
+    await summaryAndExit('ci-smoke');
 }
 
 main().catch(e => {

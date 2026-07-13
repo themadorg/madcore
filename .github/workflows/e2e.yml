@@ -56,7 +56,20 @@ jobs:
         env:
           SERVER_URL: https://127.0.0.1:8443
           NODE_TLS_REJECT_UNAUTHORIZED: "0"
-        run: bun run test:ci-smoke
+          TEST_RESULTS_DIR: test-results
+          GITHUB_SHA: ${{ github.sha }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+        run: |
+          mkdir -p test-results
+          bun run test:ci-smoke
+
+      - name: Upload smoke test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-smoke
+          path: test-results/
+          if-no-files-found: ignore
 
       - name: Stop madmail
         if: always()
@@ -100,7 +113,20 @@ jobs:
           SERVER_URL: https://127.0.0.1:8443
           NODE_TLS_REJECT_UNAUTHORIZED: "0"
           JOIN_TIMEOUT_MS: "120000"
-        run: bun run test:ci-e2e
+          TEST_RESULTS_DIR: test-results
+          GITHUB_SHA: ${{ github.sha }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+        run: |
+          mkdir -p test-results
+          bun run test:ci-e2e
+
+      - name: Upload E2E test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-e2e-full
+          path: test-results/
+          if-no-files-found: ignore
 
       - name: Stop madmail
         if: always()

@@ -32,7 +32,7 @@ async function main() {
 
     const setup = await resolvePeerSetup(server, joinUri, joinTimeoutMs);
     if (!setup) {
-        summaryAndExit();
+        await summaryAndExit('live-full');
         return;
     }
     const { dc, account: a, accountB: b, contact, contactId, peerEmail, joinUri: uri, mode } = setup;
@@ -87,7 +87,7 @@ async function main() {
         dc.findAccountByEmail(a.getCredentials().email)?.id);
     await tryMethod('dc.getAccount', () => dc.getAccount(a.id).id);
 
-    summaryAndExit();
+    await summaryAndExit('live-full');
 }
 
 main().catch(e => {
