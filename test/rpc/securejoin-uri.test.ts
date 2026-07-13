@@ -8,12 +8,12 @@ import { DeltaChatAccount, MemoryStore } from '../../sdk';
 describe('SecureJoin URI', () => {
     it('parses Delta Chat v=3 invite with IP-literal email', () => {
         const uri =
-            'https://i.delta.chat/#A6138700702D3BE74B0B185EE6109928B929696C&v=3&i=WsjmUdhijGW9RjVgNFCcjrpM&s=BHS4B2AMYvr8IgDfqqDN_lkz&a=dkupk6hkabui%40%5B172.104.241.158%5D&n=MadMailCore+Test';
+            'https://i.delta.chat/#A6138700702D3BE74B0B185EE6109928B929696C&v=3&i=WsjmUdhijGW9RjVgNFCcjrpM&s=BHS4B2AMYvr8IgDfqqDN_lkz&a=dkupk6hkabui%40%5B192.0.2.1%5D&n=MadMailCore+Test';
         const p = parseSecureJoinURI(uri);
         expect(p.fingerprint).toBe('A6138700702D3BE74B0B185EE6109928B929696C');
         expect(p.inviteNumber).toBe('WsjmUdhijGW9RjVgNFCcjrpM');
         expect(p.auth).toBe('BHS4B2AMYvr8IgDfqqDN_lkz');
-        expect(p.inviterEmail).toBe('dkupk6hkabui@[172.104.241.158]');
+        expect(p.inviterEmail).toBe('dkupk6hkabui@[192.0.2.1]');
         expect(p.name).toBe('MadMailCore Test');
     });
 
@@ -30,17 +30,17 @@ describe('SecureJoin URI', () => {
         const acc = new DeltaChatAccount(
             store,
             'acc',
-            'alice@[172.104.241.158]',
+            'alice@[192.0.2.1]',
             'pw',
-            'https://172.104.241.158',
+            'https://192.0.2.1',
         );
         await acc.generateKeys('Alice');
         const uri = acc.generateSecureJoinURI();
         expect(uri).toContain('https://i.delta.chat/#');
         expect(uri).toContain('&v=3&');
-        expect(uri).toContain(encodeURIComponent('alice@[172.104.241.158]'));
+        expect(uri).toContain(encodeURIComponent('alice@[192.0.2.1]'));
         const p = parseSecureJoinURI(uri);
-        expect(p.inviterEmail).toBe('alice@[172.104.241.158]');
+        expect(p.inviterEmail).toBe('alice@[192.0.2.1]');
         expect(p.inviteNumber.length).toBeGreaterThan(8);
         expect(p.auth.length).toBeGreaterThan(8);
     });

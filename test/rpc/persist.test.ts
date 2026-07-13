@@ -151,8 +151,8 @@ describe('account persistence', () => {
 
     it('dedupes bloated relays[] on load and saves a single primary', async () => {
         const store = new MemoryStore();
-        const email = 'user@[172.104.241.158]';
-        const serverUrl = 'https://172.104.241.158';
+        const email = 'user@[192.0.2.1]';
+        const serverUrl = 'https://192.0.2.1';
         const password = 'secret-pass';
         // Simulate a corrupted snapshot with 32 identical primary relays
         const bloated = Array.from({ length: 32 }, (_, i) => ({
