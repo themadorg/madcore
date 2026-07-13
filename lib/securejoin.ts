@@ -521,7 +521,12 @@ export async function handleIncomingSecureJoin(
 
     const prefix = step.startsWith('vg-') ? 'vg' : 'vc';
 
-    if (step === 'vc-request' || step === 'vg-request') {
+    if (
+        step === 'vc-request' ||
+        step === 'vg-request' ||
+        step === 'vc-request-pubkey' ||
+        step === 'vg-request-pubkey'
+    ) {
         const incomingInviteNum = (
             msg.secureJoinInviteNumber ||
             msg.innerHeaders?.['secure-join-invitenumber'] ||
