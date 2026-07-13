@@ -18,10 +18,6 @@ const RPGP_SYMM_CONFIG = {
     nonDeterministicSignaturesViaNotation: false,
 } as const;
 
-const SYMM_SIGN_CONFIG = {
-    nonDeterministicSignaturesViaNotation: false,
-} as const;
-
 type SkeskWire = {
     read(bytes: Uint8Array): void;
     decrypt(passphrase: string, config?: object): Promise<void>;
@@ -179,19 +175,13 @@ export async function encryptSymmetricSecureJoinRpgp(
     sharedSecret: string,
     signingKey: openpgp.PrivateKey,
 ): Promise<string> {
-    const signed = await openpgp.sign({
+    // Sign + encrypt in one step so packet order matches rPGP/core (not sign-then-encrypt).
+    const encBinary = (await openpgp.encrypt({
         message: await openpgp.createMessage({
             binary: new TextEncoder().encode(rawMimePayload),
         }),
-        signingKeys: signingKey,
-        format: 'binary',
-        config: SYMM_SIGN_CONFIG,
-    });
-    const signedMsg = await openpgp.readMessage({ binaryMessage: signed as Uint8Array });
-
-    const encBinary = (await openpgp.encrypt({
-        message: signedMsg,
         passwords: [sharedSecret],
+        signingKeys: signingKey,
         format: 'binary',
         config: RPGP_SYMM_CONFIG,
     })) as Uint8Array;
