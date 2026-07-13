@@ -1,6 +1,10 @@
 import { describe, it, expect } from 'bun:test';
 import * as openpgp from 'openpgp';
-import { decryptSymmetricSecureJoinRpgp, encryptSymmetricSecureJoinRpgp } from '../../lib/pgp-rpgp-symm';
+import {
+    _rpgpSkeskTest,
+    decryptSymmetricSecureJoinRpgp,
+    encryptSymmetricSecureJoinRpgp,
+} from '../../lib/pgp-rpgp-symm';
 import { generateKeys, secureJoinSharedSecret } from '../../lib/crypto';
 import { buildSymmSecureJoinInnerMime } from '../../lib/mime-build';
 
@@ -40,7 +44,42 @@ describe('pgp-rpgp-symm', () => {
 
         const skesk = [...msg.packets].find(p => p.constructor.name === 'SymEncryptedSessionKeyPacket');
         expect(skesk).toBeDefined();
-        expect((skesk as { version?: number }).version).toBe(4);
+        expect((skesk as { version?: number }).version).toBe(6);
+        const bin = Buffer.from(armored.split('\n').filter(l => !l.startsWith('-----') && l.trim()).join(''), 'base64');
+        expect(bin[0]).toBe(0xc3); // SKESK tag 3, old-format packet header
+        expect(bin[2]).toBe(0x06); // V6 SKESK body version
+        expect(bin[7]).toBe(0x01); // salted S2K type inside V6 fields
+    });
+
+    it('buildSaltedEskPacketV6 matches rPGP reference wire format', async () => {
+        const orig = crypto.getRandomValues.bind(crypto);
+        const fixedSalt = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8]);
+        const fixedIv = new Uint8Array([
+            0xe0, 0xec, 0xe9, 0x3f, 0xe2, 0x52, 0xe5, 0xa3, 0xf9, 0x91, 0x5e, 0xd6, 0x62, 0x69, 0xaf,
+        ]);
+        let saltCalls = 0;
+        crypto.getRandomValues = <T extends ArrayBufferView>(arr: T): T => {
+            if (arr instanceof Uint8Array && arr.length === 8 && saltCalls++ === 0) {
+                arr.set(fixedSalt);
+                return arr;
+            }
+            if (arr instanceof Uint8Array && arr.length === 15) {
+                arr.set(fixedIv);
+                return arr;
+            }
+            return orig(arr);
+        };
+        try {
+            const sessionKey = new Uint8Array(16).fill(0x11);
+            const packet = await _rpgpSkeskTest.buildSaltedEskPacketV6('pw', sessionKey);
+            const expectedBody =
+                '061c07020a01080102030405060708e0ece93fe252e5a3f9915ed66269af38a559c18cbfc75eeb00ca48c62bc33b8f6c7000579bb561ffa6cf81b3d017d3';
+            // buildSaltedEskPacketV6 returns a full old-format packet (c3 + len + body).
+            expect(packet[0]).toBe(0xc3);
+            expect(Buffer.from(packet.subarray(2)).toString('hex')).toBe(expectedBody);
+        } finally {
+            crypto.getRandomValues = orig;
+        }
     });
 
     it('decryptSymmetricSecureJoinRpgp roundtrips encrypt output', async () => {

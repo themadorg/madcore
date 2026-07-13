@@ -128,12 +128,19 @@ async function aesCfbDecryptRegular(key: Uint8Array, ciphertext: Uint8Array): Pr
 }
 
 async function aesEcbBlock(key: Uint8Array, block: Uint8Array): Promise<Uint8Array> {
-    const keyBytes = new Uint8Array(key);
-    const blockBytes = new Uint8Array(block);
-    const k = await crypto.subtle.importKey('raw', keyBytes, { name: 'AES-CBC' }, false, ['encrypt']);
-    const iv = new Uint8Array(16);
-    const ct = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-CBC', iv }, k, blockBytes));
-    return ct.subarray(0, 16);
+    try {
+        const { createCipheriv } = await import('node:crypto');
+        const cipher = createCipheriv('aes-128-ecb', Buffer.from(key), null);
+        cipher.setAutoPadding(false);
+        return new Uint8Array(cipher.update(Buffer.from(block)));
+    } catch {
+        const keyBytes = new Uint8Array(key);
+        const blockBytes = new Uint8Array(block);
+        const k = await crypto.subtle.importKey('raw', keyBytes, { name: 'AES-CBC' }, false, ['encrypt']);
+        const iv = new Uint8Array(16);
+        const ct = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-CBC', iv }, k, blockBytes));
+        return ct.subarray(0, 16);
+    }
 }
 
 function writePacket(tag: number, body: Uint8Array): Uint8Array {
@@ -183,27 +190,249 @@ function parsePacket(bytes: Uint8Array, offset = 0): {
     return { tag, body, packetBytes: bytes.subarray(start, offset + len), next: offset + len };
 }
 
-async function buildSaltedEskPacket(
+const OCB_BLOCK = 16;
+const OCB_IV = 15;
+const OCB_TAG = 16;
+const OCB_L_TABLE = 32;
+
+function ocbNtz(n: number): number {
+    if (n === 0) return 0;
+    let v = 0;
+    while ((n & 1) === 0) {
+        n >>= 1;
+        v++;
+    }
+    return v;
+}
+
+function xorBlock(a: Uint8Array, b: Uint8Array): Uint8Array {
+    const out = new Uint8Array(a.length);
+    for (let i = 0; i < a.length; i++) out[i] = a[i]! ^ b[i]!;
+    return out;
+}
+
+function xorMutBlock(a: Uint8Array, b: Uint8Array): void {
+    for (let i = 0; i < a.length; i++) a[i] ^= b[i]!;
+}
+
+function readU128Be(bytes: Uint8Array): bigint {
+    let v = 0n;
+    for (let i = 0; i < 16; i++) v = (v << 8n) | BigInt(bytes[i]!);
+    return v;
+}
+
+function writeU128Be(v: bigint): Uint8Array {
+    const out = new Uint8Array(16);
+    let x = v;
+    for (let i = 15; i >= 0; i--) {
+        out[i] = Number(x & 0xffn);
+        x >>= 8n;
+    }
+    return out;
+}
+
+/** ocb3 GF(2^128) double — matches rPGP's `ocb3` crate (not openpgp.js OCB). */
+function ocb3Double(block: Uint8Array): Uint8Array {
+    let v = readU128Be(block);
+    const vHi = v >> 127n;
+    v <<= 1n;
+    v ^= vHi ^ (vHi << 1n) ^ (vHi << 2n) ^ (vHi << 7n);
+    return writeU128Be(v);
+}
+
+async function ocb3KeyVars(encipher: (block: Uint8Array) => Promise<Uint8Array>): Promise<{
+    llStar: Uint8Array;
+    llDollar: Uint8Array;
+    ll: Uint8Array[];
+}> {
+    const llStar = await encipher(new Uint8Array(OCB_BLOCK));
+    const llDollar = ocb3Double(llStar);
+    const ll: Uint8Array[] = [];
+    let llI = llDollar;
+    for (let i = 0; i < OCB_L_TABLE; i++) {
+        llI = ocb3Double(llI);
+        ll[i] = llI;
+    }
+    return { llStar, llDollar, ll };
+}
+
+async function ocb3InitialOffset(
+    encipher: (block: Uint8Array) => Promise<Uint8Array>,
+    nonce: Uint8Array,
+): Promise<Uint8Array> {
+    const block = new Uint8Array(OCB_BLOCK);
+    block[0] = 0;
+    const start = OCB_BLOCK - nonce.length;
+    block.set(nonce, start);
+    block[start - 1]! |= 1;
+    const bottom = block[15]! & 0b111111;
+    const top = readU128Be(block) & ~0b111111n;
+    const kTop = await encipher(writeU128Be(top));
+    const stretch = new Uint8Array(24);
+    stretch.set(kTop, 0);
+    const tmp = kTop.slice();
+    for (let i = 0; i < 8; i++) tmp[i] ^= tmp[i + 1]!;
+    stretch.set(tmp.subarray(0, 8), 16);
+    const stretchLow = readU128Be(stretch.subarray(0, 16));
+    let stretchHi = 0n;
+    for (let i = 16; i < 24; i++) stretchHi = (stretchHi << 8n) | BigInt(stretch[i]!);
+    const offset = (stretchLow << BigInt(bottom)) | (stretchHi >> BigInt(64 - bottom));
+    return writeU128Be(offset);
+}
+
+async function ocb3Hash(
+    encipher: (block: Uint8Array) => Promise<Uint8Array>,
+    llStar: Uint8Array,
+    ll: Uint8Array[],
+    associatedData: Uint8Array,
+): Promise<Uint8Array> {
+    let offsetI = new Uint8Array(OCB_BLOCK);
+    let sumI = new Uint8Array(OCB_BLOCK);
+    let i = 1;
+    const fullBlocks = Math.floor(associatedData.length / OCB_BLOCK);
+    for (let b = 0; b < fullBlocks; b++) {
+        xorMutBlock(offsetI, ll[ocbNtz(i)]!);
+        let aI = xorBlock(associatedData.subarray(b * OCB_BLOCK, (b + 1) * OCB_BLOCK), offsetI);
+        aI = await encipher(aI);
+        xorMutBlock(sumI, aI);
+        i++;
+    }
+    const rem = associatedData.length % OCB_BLOCK;
+    if (rem > 0) {
+        xorMutBlock(offsetI, llStar);
+        const cipherInput = new Uint8Array(OCB_BLOCK);
+        cipherInput.set(associatedData.subarray(fullBlocks * OCB_BLOCK), 0);
+        cipherInput[rem] = 0b1000_0000;
+        xorMutBlock(cipherInput, offsetI);
+        const enc = await encipher(cipherInput);
+        xorMutBlock(sumI, enc);
+    }
+    return sumI;
+}
+
+async function hkdfSha256(
+    ikm: Uint8Array,
+    salt: Uint8Array,
+    info: Uint8Array,
+    length: number,
+): Promise<Uint8Array> {
+    const key = await crypto.subtle.importKey('raw', ikm, 'HKDF', false, ['deriveBits']);
+    const bits = await crypto.subtle.deriveBits(
+        { name: 'HKDF', hash: 'SHA-256', salt, info },
+        key,
+        length * 8,
+    );
+    return new Uint8Array(bits);
+}
+
+/** RFC 9580 SKESK v6 associated data: 0xC3 | tag, version, sym, aead. */
+function skeskV6Adata(symAlg: number, aeadAlg: number): Uint8Array {
+    return new Uint8Array([0xc3, 0x06, symAlg, aeadAlg]);
+}
+
+/** ocb3 OCB-AES128 encrypt (rPGP-compatible; openpgp.js OCB encrypt is not). */
+async function ocb3Aes128Encrypt(
+    key: Uint8Array,
+    plaintext: Uint8Array,
+    nonce: Uint8Array,
+    adata: Uint8Array,
+): Promise<Uint8Array> {
+    const encipher = (block: Uint8Array) => aesEcbBlock(key, block);
+    const { llStar, llDollar, ll } = await ocb3KeyVars(encipher);
+    let offsetI = await ocb3InitialOffset(encipher, nonce);
+    let checksumI = new Uint8Array(OCB_BLOCK);
+    const out = new Uint8Array(plaintext.length + OCB_TAG);
+    let pos = 0;
+    let i = 1;
+    const fullBlocks = Math.floor(plaintext.length / OCB_BLOCK);
+    for (let b = 0; b < fullBlocks; b++) {
+        xorMutBlock(offsetI, ll[ocbNtz(i)]!);
+        const pBlock = plaintext.subarray(b * OCB_BLOCK, (b + 1) * OCB_BLOCK);
+        xorMutBlock(checksumI, pBlock);
+        let cBlock = xorBlock(pBlock, offsetI);
+        cBlock = await encipher(cBlock);
+        xorMutBlock(cBlock, offsetI);
+        out.set(cBlock, pos);
+        pos += OCB_BLOCK;
+        i++;
+    }
+    const rem = plaintext.length % OCB_BLOCK;
+    if (rem > 0) {
+        xorMutBlock(offsetI, llStar);
+        const pad = await encipher(offsetI.slice());
+        const pStar = plaintext.subarray(fullBlocks * OCB_BLOCK);
+        const cStar = xorBlock(pStar, pad.subarray(0, rem));
+        out.set(cStar, pos);
+        const checksumRhs = new Uint8Array(OCB_BLOCK);
+        checksumRhs.set(pStar, 0);
+        checksumRhs[rem] = 0b1000_0000;
+        xorMutBlock(checksumI, checksumRhs);
+        pos += rem;
+    }
+    const fullTag = checksumI.slice();
+    xorMutBlock(fullTag, offsetI);
+    xorMutBlock(fullTag, llDollar);
+    const encTag = await encipher(fullTag);
+    const adHash = await ocb3Hash(encipher, llStar, ll, adata);
+    const tag = xorBlock(encTag, adHash);
+    out.set(tag, pos);
+    return out;
+}
+
+type SkeskPacketWire = {
+    read(bytes: Uint8Array): void;
+    write(): Uint8Array;
+    s2k: {
+        write(): Uint8Array;
+        produceKey(passphrase: string, numBytes: number, config?: object): Promise<Uint8Array>;
+        salt: Uint8Array | null;
+    };
+    sessionKeyEncryptionAlgorithm: number | null;
+    iv: Uint8Array | null;
+    encrypted: Uint8Array | null;
+};
+
+/** Parse a salted-S2K template via openpgp (GenericS2K with produceKey). */
+function loadSaltedS2kTemplate(salt: Uint8Array, symAlg: number): SkeskPacketWire['s2k'] {
+    const s2kWire = new Uint8Array([1, 8, ...salt]);
+    const firstLen = 3 + s2kWire.length + OCB_IV;
+    const probe = new Uint8Array([
+        6,
+        firstLen,
+        symAlg,
+        openpgp.enums.aead.ocb,
+        s2kWire.length,
+        ...s2kWire,
+        ...new Uint8Array(OCB_IV),
+        ...new Uint8Array(OCB_BLOCK + OCB_TAG),
+    ]);
+    const pkt = new openpgp.SymEncryptedSessionKeyPacket(RPGP_SYMM_CONFIG) as unknown as SkeskPacketWire;
+    pkt.read(probe);
+    return pkt.s2k;
+}
+
+/** V6 SKESK + salted S2K + OCB — wire format rPGP 0.20 accepts (unlike v4 SKESK). */
+async function buildSaltedEskPacketV6(
     passphrase: string,
     sessionKey: Uint8Array,
     algorithm: number = openpgp.enums.symmetric.aes128,
 ): Promise<Uint8Array> {
     const salt = crypto.getRandomValues(new Uint8Array(8));
-    const derived = await saltedS2KDerive(passphrase, salt, 16);
-    const payload = new Uint8Array(1 + sessionKey.length);
-    payload[0] = algorithm;
-    payload.set(sessionKey, 1);
-    const encrypted = await aesCfbEncryptRegular(derived, payload);
-    const body = new Uint8Array(2 + 1 + 1 + 8 + encrypted.length);
-    let o = 0;
-    body[o++] = 4; // ESK version
-    body[o++] = algorithm;
-    body[o++] = 1; // S2K type: salted
-    body[o++] = 8; // hash: SHA256
-    body.set(salt, o);
-    o += 8;
-    body.set(encrypted, o);
-    return writePacket(3, body);
+    const aeadAlg = openpgp.enums.aead.ocb;
+    const s2k = loadSaltedS2kTemplate(salt, algorithm);
+    const keySize = 16;
+    const ikm = await s2k.produceKey(passphrase, keySize, RPGP_SYMM_CONFIG);
+    const adata = skeskV6Adata(algorithm, aeadAlg);
+    const okm = await hkdfSha256(ikm, new Uint8Array(), adata, keySize);
+    const iv = crypto.getRandomValues(new Uint8Array(OCB_IV));
+    const encrypted = await ocb3Aes128Encrypt(okm, sessionKey, iv, adata);
+
+    const pkt = new openpgp.SymEncryptedSessionKeyPacket(RPGP_SYMM_CONFIG) as unknown as SkeskPacketWire;
+    pkt.sessionKeyEncryptionAlgorithm = algorithm;
+    pkt.s2k = s2k;
+    pkt.iv = iv;
+    pkt.encrypted = encrypted;
+    return writePacket(3, pkt.write());
 }
 
 function uint8ToBase64(bytes: Uint8Array): string {
@@ -266,7 +495,7 @@ export async function encryptSymmetricSecureJoinRpgp(
         skesk.sessionKeyEncryptionAlgorithm ??
         openpgp.enums.symmetric.aes128;
 
-    const eskBytes = await buildSaltedEskPacket(sharedSecret, new Uint8Array(skesk.sessionKey), algo);
+    const eskBytes = await buildSaltedEskPacketV6(sharedSecret, new Uint8Array(skesk.sessionKey), algo);
 
     // Replace only the leading SKESK packet; preserve the rest of the binary verbatim
     // (openpgp v6 may append metadata after SEIPD — re-parsing would corrupt SEIPD).
@@ -292,7 +521,29 @@ function armoredToBinary(armored: string): Uint8Array {
     return out;
 }
 
-async function unwrapSaltedSkeskBody(body: Uint8Array, sharedSecret: string): Promise<{
+async function unwrapSkeskBody(body: Uint8Array, sharedSecret: string): Promise<{
+    sessionKey: Uint8Array;
+    algorithm: number;
+}> {
+    if (body[0] === 6) {
+        const pkt = new openpgp.SymEncryptedSessionKeyPacket(RPGP_SYMM_CONFIG) as unknown as SkeskWire;
+        pkt.read(body);
+        await pkt.decrypt(sharedSecret, RPGP_SYMM_CONFIG);
+        if (!pkt.sessionKey) {
+            throw new Error('Failed to decrypt V6 SKESK');
+        }
+        return {
+            sessionKey: new Uint8Array(pkt.sessionKey),
+            algorithm:
+                pkt.sessionKeyAlgorithm ??
+                pkt.sessionKeyEncryptionAlgorithm ??
+                openpgp.enums.symmetric.aes128,
+        };
+    }
+    return unwrapSaltedSkeskV4Body(body, sharedSecret);
+}
+
+async function unwrapSaltedSkeskV4Body(body: Uint8Array, sharedSecret: string): Promise<{
     sessionKey: Uint8Array;
     algorithm: number;
 }> {
@@ -336,7 +587,7 @@ export async function decryptSymmetricSecureJoinRpgp(
         throw new Error(`Expected SKESK first, got tag ${skeskPkt.tag}`);
     }
 
-    const { sessionKey } = await unwrapSaltedSkeskBody(skeskPkt.body, sharedSecret);
+    const { sessionKey } = await unwrapSkeskBody(skeskPkt.body, sharedSecret);
 
     const { data } = await openpgp.decrypt({
         message,
@@ -346,3 +597,9 @@ export async function decryptSymmetricSecureJoinRpgp(
 
     return typeof data === 'string' ? data : new TextDecoder().decode(data as Uint8Array);
 }
+
+/** @internal Exported for rPGP interop unit tests only. */
+export const _rpgpSkeskTest = {
+    buildSaltedEskPacketV6,
+    ocb3Aes128Encrypt,
+};
