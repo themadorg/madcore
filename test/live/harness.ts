@@ -136,7 +136,9 @@ export function waitForIncomingMsg(
             if (opts.type) {
                 const storeType = msg.type
                     || (msg.viewtype ? String(msg.viewtype).toLowerCase() : undefined);
-                if (storeType !== opts.type) return;
+                const alt = opts.type === 'sticker' && msg.isSticker;
+                const altVoice = opts.type === 'voice' && (msg.isVoiceMessage || msg.viewtype === 'Voice');
+                if (storeType !== opts.type && !alt && !altVoice) return;
             }
             if (opts.textIncludes && !msg.text?.includes(opts.textIncludes)) return;
             clearTimeout(timer);

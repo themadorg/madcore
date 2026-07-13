@@ -110,6 +110,18 @@ describe('account persistence', () => {
         expect(await dc.listPersistedAccounts()).toEqual([]);
     });
 
+    it('exportBackup / importBackup round-trip restores config', async () => {
+        const store = new MemoryStore();
+        const a = new DeltaChatAccount(store, 'bk1', 'backup@relay.test', 'pw', 'https://relay.test');
+        await a.generateKeys('Backup');
+        await a.setConfig('e2e_marker', 'roundtrip-ok');
+        const blob = await a.exportBackup();
+        const b = new DeltaChatAccount(store, 'bk2', 'other@relay.test', 'pw2', 'https://relay.test');
+        await b.importBackup(blob);
+        expect(await b.getConfig('e2e_marker')).toBe('roundtrip-ok');
+        expect(b.getCredentials().email).toBe('backup@relay.test');
+    });
+
     it('schedulePersist + flushPersist writes without explicit saveToStore', async () => {
         const store = new MemoryStore();
         const a = new DeltaChatAccount(store, 'acc3', 'eve@relay.test', 'pw', 'https://relay.test');

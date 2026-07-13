@@ -62,7 +62,7 @@ async function main() {
     }
 
     console.log('\n── WebIMAP WebSocket depth ──');
-    await runWsSuite(a, 'ci');
+    await runWsSuite(a, 'ci', { peerAccount: b, accountEmail: aEmail });
 
     console.log('\n── Webxdc / location / calls ──');
     await runWebxdcSuite(a, contact, peerEmail);
@@ -79,16 +79,16 @@ async function main() {
     await runGroupsSuite(a, b, peerEmail, joinTimeoutMs);
 
     console.log('\n── Store / chat / contacts ──');
-    await runStoreChatSuite(a, peerEmail, contactId);
+    await runStoreChatSuite(a, peerEmail, contactId, b, aEmail);
 
     console.log('\n── QR helpers ──');
     await runQrHelpers(a, uri);
 
     console.log('\n── Config / backup / relays ──');
-    await runConfigBackupSuite(a, server);
+    await runConfigBackupSuite(a, server, dc);
 
     console.log('\n── SecureJoin extras ──');
-    await runSecureJoinExtras(a, peerEmail);
+    await runSecureJoinExtras(a, peerEmail, b, aEmail);
 
     console.log('\n── Teardown ──');
     await tryMethod('disconnect', () => { a.disconnect(); });

@@ -1,12 +1,14 @@
 /**
  * Live suite: chat list, search, drafts, archive/pin/mute, contacts, block.
  */
-import { PNG, tryMethod, skip, type LiveAccount } from './harness';
+import { PNG, tryMethod, waitForIncomingMsg, sleep, type LiveAccount } from './harness';
 
 export async function runStoreChatSuite(
     account: LiveAccount,
     peerEmail: string,
     contactId: string,
+    peerAccount?: LiveAccount | null,
+    accountEmail?: string,
 ) {
     const chatId = peerEmail.toLowerCase();
 
@@ -25,13 +27,27 @@ export async function runStoreChatSuite(
     await tryMethod('findContactByEmail', () => account.findContactByEmail(peerEmail)?.email);
     await tryMethod('getUnreadCount', () => account.getUnreadCount());
     await tryMethod('markChatRead', () => account.markChatRead(chatId));
-    const msgsForSeen = await account.getChatMessages(chatId, 50, 0);
-    const incoming = msgsForSeen.find((m: any) => m.direction === 'incoming');
-    if (incoming) {
-        await tryMethod('markMessageSeen', () => account.markMessageSeen(incoming.id));
-    } else {
-        skip('markMessageSeen', 'no incoming msg in store yet');
+    let msgsForSeen = await account.getChatMessages(chatId, 50, 0);
+    let incoming = msgsForSeen.find((m: any) => m.direction === 'incoming');
+    if (!incoming && peerAccount && accountEmail) {
+        const seenMarker = `seen-${Date.now()}`;
+        const seenWait = waitForIncomingMsg(account, {
+            fromEmail: peerEmail,
+            textIncludes: seenMarker,
+            timeoutMs: 90_000,
+        });
+        await peerAccount.sendMessage(accountEmail, seenMarker);
+        await seenWait;
+        await sleep(500);
+        msgsForSeen = await account.getChatMessages(chatId, 50, 0);
+        incoming = msgsForSeen.find((m: any) => m.direction === 'incoming' && m.text?.includes(seenMarker))
+            || msgsForSeen.find((m: any) => m.direction === 'incoming');
     }
+    await tryMethod('markMessageSeen', async () => {
+        if (!incoming?.id) throw new Error('no incoming msg for markMessageSeen');
+        await account.markMessageSeen(incoming.id);
+        return incoming.id.slice(0, 24);
+    });
     await tryMethod('archiveChat', () => account.archiveChat(chatId, true));
     await tryMethod('archiveChat(un)', () => account.archiveChat(chatId, false));
     await tryMethod('pinChat', () => account.pinChat(chatId, true));

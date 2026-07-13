@@ -49,6 +49,7 @@ for _ in $(seq 1 60); do
   if curl -skf "https://127.0.0.1:8443/" >/dev/null 2>&1; then
     docker exec "$NAME" madmail webimap enable >/dev/null
     docker exec "$NAME" madmail websmtp enable >/dev/null
+    docker exec "$NAME" madmail port imap public >/dev/null 2>&1 || true
     docker exec "$NAME" madmail reload >/dev/null 2>&1 || true
     for _ in $(seq 1 30); do
       code="$(curl -sk -o /dev/null -w '%{http_code}' "https://127.0.0.1:8443/webimap/mailboxes" || true)"

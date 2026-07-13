@@ -2,7 +2,7 @@
  * Live suite: SecureJoin peer + QR helpers.
  */
 import { parseSecureJoinURI } from '../../lib/securejoin';
-import { tryMethod, fail, skip, type LiveAccount, type LiveContact } from './harness';
+import { tryMethod, fail, skip, sleep, type LiveAccount, type LiveContact } from './harness';
 
 export async function secureJoinPeer(
     account: LiveAccount,
@@ -43,7 +43,34 @@ export async function runQrHelpers(account: LiveAccount, joinUri: string) {
     await tryMethod('parseSecureJoinURI', () => account.parseSecureJoinURI(joinUri).inviterEmail);
 }
 
-export async function runSecureJoinExtras(account: LiveAccount, peerEmail: string) {
+export async function runSecureJoinAuthSuite(
+    inviter: LiveAccount,
+    joiner: LiveAccount,
+    inviterEmail: string,
+) {
+    const uri = inviter.generateSecureJoinURI({ regenerate: true });
+    const parsed = inviter.parseSecureJoinURI(uri);
+
+    await tryMethod('sendSecureJoinRequest', () =>
+        joiner.sendSecureJoinRequest(inviterEmail, parsed.inviteNumber));
+
+    await sleep(3000);
+    await joiner.backgroundFetch(0);
+
+    await tryMethod('sendSecureJoinAuth', () =>
+        joiner.sendSecureJoinAuth(inviterEmail, parsed.auth));
+}
+
+export async function runSecureJoinExtras(
+    account: LiveAccount,
+    peerEmail: string,
+    joiner?: LiveAccount | null,
+    inviterEmail?: string,
+) {
+    if (joiner && inviterEmail) {
+        await runSecureJoinAuthSuite(account, joiner, inviterEmail);
+        return;
+    }
     await tryMethod('sendSecureJoinRequest', async () => {
         try {
             await account.sendSecureJoinRequest(peerEmail, 'test-invite', undefined);
@@ -51,5 +78,4 @@ export async function runSecureJoinExtras(account: LiveAccount, peerEmail: strin
             if (!e.message) throw e;
         }
     });
-    skip('sendSecureJoinAuth', 'requires mid-handshake state');
 }

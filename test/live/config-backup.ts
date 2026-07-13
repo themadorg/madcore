@@ -1,9 +1,77 @@
 /**
  * Live suite: config, push hooks, device messages, backup, multi-relay.
  */
-import { tryMethod, skip, type LiveAccount } from './harness';
+import type { DeltaChatSDK } from '../../sdk';
+import { tryMethod, sleep, type LiveAccount } from './harness';
 
-export async function runConfigBackupSuite(account: LiveAccount, server: string) {
+export async function runImportBackupSuite(
+    dc: ReturnType<typeof DeltaChatSDK>,
+    server: string,
+) {
+    const marker = `import-${Date.now()}`;
+    const srcReg = await tryMethod('importBackup/setup src', () => dc.register(server, 'E2E BackupSrc'));
+    if (!srcReg?.account) return;
+    const src = srcReg.account as LiveAccount;
+    await tryMethod('importBackup/src keys', () => src.generateKeys('BackupSrc'));
+    await tryMethod('importBackup/src connect', async () => {
+        await src.connect(server);
+        await sleep(300);
+    });
+    await tryMethod('importBackup/src seed config', () => src.setConfig('e2e_import_marker', marker));
+    const srcEmail = src.getCredentials().email;
+    const srcId = src.id;
+    const blob = await tryMethod('importBackup/export', () => src.exportBackup());
+    if (!blob) return;
+    src.disconnect();
+
+    const dstReg = await tryMethod('importBackup/setup dst', () => dc.register(server, 'E2E BackupDst'));
+    if (!dstReg?.account) return;
+    const dst = dstReg.account as LiveAccount;
+    const dstId = dst.id;
+    await tryMethod('importBackup/live import', async () => {
+        await dst.importBackup(blob);
+        const v = await dst.getConfig('e2e_import_marker');
+        if (v !== marker) throw new Error(`marker mismatch: ${v}`);
+        if (dst.getCredentials().email !== srcEmail) {
+            throw new Error('email not restored from backup');
+        }
+        return v;
+    });
+    dst.disconnect();
+    await tryMethod('importBackup/cleanup', () => {
+        dc.removeAccount(dstId);
+        dc.removeAccount(srcId);
+    });
+}
+
+export async function runDeleteChatSuite(account: LiveAccount) {
+    const tag = Date.now().toString(36);
+    const email = `deletechat-${tag}@e2e.local`;
+    await tryMethod('deleteChat/setup contact', () =>
+        account.createContact({
+            email,
+            name: 'DeleteMe',
+            key: account.getPublicKeyArmored(),
+        }));
+    const chatId = email.toLowerCase();
+    await tryMethod('deleteChat/seed chat', async () => {
+        await account.getOrCreateChat(email);
+        await account.addDeviceMessage(`del-${tag}`, 'chat to delete');
+        return chatId;
+    });
+    await tryMethod('deleteChat', async () => {
+        await account.deleteChat(chatId);
+        const gone = await account.getChat(chatId);
+        if (gone) throw new Error('chat still in store');
+        return 'deleted';
+    });
+}
+
+export async function runConfigBackupSuite(
+    account: LiveAccount,
+    server: string,
+    dc?: ReturnType<typeof DeltaChatSDK>,
+) {
     await tryMethod('setConfig', () => account.setConfig('e2e_flag', '1'));
     await tryMethod('getConfig', () => account.getConfig('e2e_flag'));
     await tryMethod('batchSetConfig', () => account.batchSetConfig({ e2e_a: '1', e2e_b: '2' }));
@@ -25,8 +93,11 @@ export async function runConfigBackupSuite(account: LiveAccount, server: string)
         const j = await account.exportBackup({ passphrase: 'e2e-temp-pass' });
         return JSON.parse(j).enc ? 'enc' : 'plain';
     });
-    skip('importBackup', 'destructive on live session; covered offline');
-    skip('deleteChat', 'would wipe peer conversation UI state');
+
+    if (dc) {
+        await runImportBackupSuite(dc, server);
+    }
+    await runDeleteChatSuite(account);
 
     await tryMethod('addRelay', async () => {
         const r = await account.addRelay(server);

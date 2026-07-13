@@ -1,38 +1,27 @@
 /**
  * Live suite: webxdc, location streaming, call signaling.
  */
-import { tryMethod, skip, type LiveAccount, type LiveContact } from './harness';
+import { tryMethod, type LiveAccount, type LiveContact } from './harness';
 
 export async function runWebxdcSuite(
     account: LiveAccount,
     contact: LiveContact,
-    peerEmail: string,
+    _peerEmail: string,
 ) {
-    await tryMethod('sendWebxdc', () =>
+    const sent = await tryMethod('sendWebxdc', () =>
         account.sendWebxdc(contact, {
             data: btoa('PK\x03\x04fake-xdc'),
             name: 'E2E App',
             filename: 'app.xdc',
         }));
 
-    const chatsAfter = await account.getChatList();
-    const peerChat = chatsAfter.find((c: any) =>
-        c.peerEmail?.toLowerCase() === peerEmail.toLowerCase()
-        || c.id?.toLowerCase() === peerEmail.toLowerCase(),
-    );
-    if (peerChat) {
-        const msgs = await account.getChatMessages(peerChat.id, 20, 0);
-        const wx = msgs.find((m: any) => m.type === 'webxdc');
-        if (wx) {
-            await tryMethod('sendWebxdcStatusUpdate', () =>
-                account.sendWebxdcStatusUpdate(contact, wx.id, { payload: { hello: 1 }, serial: 1 }));
-            await tryMethod('getWebxdcStatusUpdates', () =>
-                account.getWebxdcStatusUpdates(wx.id, 0));
-        } else {
-            skip('sendWebxdcStatusUpdate', 'no webxdc msg in store');
-            skip('getWebxdcStatusUpdates', 'no webxdc msg in store');
-        }
-    }
+    const wxId = sent?.message?.id || sent?.msgId;
+    if (!wxId) throw new Error('sendWebxdc did not return msg id');
+
+    await tryMethod('sendWebxdcStatusUpdate', () =>
+        account.sendWebxdcStatusUpdate(contact, wxId, { payload: { hello: 1 }, serial: 1 }));
+    await tryMethod('getWebxdcStatusUpdates', () =>
+        account.getWebxdcStatusUpdates(wxId, 0));
 }
 
 export async function runLocationSuite(account: LiveAccount, peerEmail: string) {
@@ -52,10 +41,7 @@ export async function runCallsSuite(account: LiveAccount, contact: LiveContact) 
     await tryMethod('getIceServers', () => `${account.getIceServers().length} servers`);
     const call = await tryMethod('placeOutgoingCall', () =>
         account.placeOutgoingCall(contact, { video: false }));
-    if (call?.callId) {
-        await tryMethod('getCall', () => account.getCall(call.callId)?.state);
-        await tryMethod('endCall', () => account.endCall(call.callId));
-    } else {
-        skip('getCall/endCall', 'no call session');
-    }
+    if (!call?.callId) throw new Error('placeOutgoingCall did not return callId');
+    await tryMethod('getCall', () => account.getCall(call.callId)?.state);
+    await tryMethod('endCall', () => account.endCall(call.callId));
 }
