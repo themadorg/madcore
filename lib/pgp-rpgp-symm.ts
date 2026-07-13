@@ -18,6 +18,11 @@ const RPGP_SYMM_CONFIG = {
     nonDeterministicSignaturesViaNotation: false,
 } as const;
 
+// openpgp.js accepts config in the ctor at runtime; published types omit it.
+const SymSkeskPacket = openpgp.SymEncryptedSessionKeyPacket as unknown as new (
+    config?: typeof RPGP_SYMM_CONFIG,
+) => InstanceType<typeof openpgp.SymEncryptedSessionKeyPacket>;
+
 type SkeskWire = {
     read(bytes: Uint8Array): void;
     decrypt(passphrase: string, config?: object): Promise<void>;
@@ -316,9 +321,9 @@ async function hkdfSha256(
     info: Uint8Array,
     length: number,
 ): Promise<Uint8Array> {
-    const key = await crypto.subtle.importKey('raw', ikm, 'HKDF', false, ['deriveBits']);
+    const key = await crypto.subtle.importKey('raw', ikm as BufferSource, 'HKDF', false, ['deriveBits']);
     const bits = await crypto.subtle.deriveBits(
-        { name: 'HKDF', hash: 'SHA-256', salt, info },
+        { name: 'HKDF', hash: 'SHA-256', salt: salt as BufferSource, info: info as BufferSource },
         key,
         length * 8,
     );
@@ -406,7 +411,7 @@ function loadSaltedS2kTemplate(salt: Uint8Array, symAlg: number): SkeskPacketWir
         ...new Uint8Array(OCB_IV),
         ...new Uint8Array(OCB_BLOCK + OCB_TAG),
     ]);
-    const pkt = new openpgp.SymEncryptedSessionKeyPacket(RPGP_SYMM_CONFIG) as unknown as SkeskPacketWire;
+    const pkt = new SymSkeskPacket(RPGP_SYMM_CONFIG) as unknown as SkeskPacketWire;
     pkt.read(probe);
     return pkt.s2k;
 }
@@ -427,7 +432,7 @@ async function buildSaltedEskPacketV6(
     const iv = crypto.getRandomValues(new Uint8Array(OCB_IV));
     const encrypted = await ocb3Aes128Encrypt(okm, sessionKey, iv, adata);
 
-    const pkt = new openpgp.SymEncryptedSessionKeyPacket(RPGP_SYMM_CONFIG) as unknown as SkeskPacketWire;
+    const pkt = new SymSkeskPacket(RPGP_SYMM_CONFIG) as unknown as SkeskPacketWire;
     pkt.sessionKeyEncryptionAlgorithm = algorithm;
     pkt.s2k = s2k;
     pkt.iv = iv;
@@ -526,7 +531,7 @@ async function unwrapSkeskBody(body: Uint8Array, sharedSecret: string): Promise<
     algorithm: number;
 }> {
     if (body[0] === 6) {
-        const pkt = new openpgp.SymEncryptedSessionKeyPacket(RPGP_SYMM_CONFIG) as unknown as SkeskWire;
+        const pkt = new SymSkeskPacket(RPGP_SYMM_CONFIG) as unknown as SkeskWire;
         pkt.read(body);
         await pkt.decrypt(sharedSecret, RPGP_SYMM_CONFIG);
         if (!pkt.sessionKey) {
