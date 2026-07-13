@@ -23,7 +23,12 @@ import type {
     DCEvent,
     DCEventData,
 } from '../types.js';
-import { generateAccountId } from './utils.js';
+import {
+    generateAccountId,
+    dedupeRelaysByServerUrl,
+    normalizeServerUrl,
+    type RelayRecord,
+} from './utils.js';
 
 export abstract class AccountBase {
     // ── Identity ──
@@ -224,26 +229,71 @@ export abstract class AccountBase {
 
     /** Set credentials manually (creates/updates primary relay) */
     setCredentials(email: string, password: string, serverUrl: string): void {
-        let relayId = '';
-        // Update existing relay for this server, or create new
-        for (const [id, r] of this.relays) {
-            if (r.serverUrl === serverUrl) { relayId = id; break; }
+        const url = normalizeServerUrl(serverUrl);
+        if (!email?.trim() || !password || !url) {
+            log.warn('sdk', 'setCredentials ignored: missing email, password, or serverUrl');
+            return;
         }
-        if (!relayId) {
-            relayId = generateAccountId();
-            this.relays.set(relayId, { id: relayId, serverUrl, email, password });
-        } else {
-            this.relays.set(relayId, { id: relayId, serverUrl, email, password });
+        this.upsertRelay({ email, password, serverUrl: url }, true);
+    }
+
+    /**
+     * Insert or update a single relay keyed by normalized serverUrl.
+     * Drops any other rows that share the same URL (repairs bloated snapshots).
+     */
+    protected upsertRelay(
+        relay: { email: string; password: string; serverUrl: string; id?: string },
+        makePrimary = false,
+        opts?: { persist?: boolean },
+    ): string {
+        const url = normalizeServerUrl(relay.serverUrl);
+        let keepId = relay.id || '';
+        for (const [id, r] of [...this.relays.entries()]) {
+            if (normalizeServerUrl(r.serverUrl) !== url) continue;
+            if (!keepId) keepId = id;
+            if (id !== keepId) this.relays.delete(id);
         }
-        // Update or create transport
-        let t = this.transports.get(serverUrl);
+        if (!keepId) keepId = generateAccountId();
+
+        const prev = this.relays.get(keepId);
+        const password = relay.password || prev?.password || '';
+        const email = relay.email || prev?.email || '';
+        const unchanged =
+            prev &&
+            prev.email === email &&
+            prev.password === password &&
+            normalizeServerUrl(prev.serverUrl) === url &&
+            (!makePrimary || this.primaryRelayId === keepId);
+
+        this.relays.set(keepId, { id: keepId, serverUrl: url, email, password });
+
+        let t: Transport | undefined;
+        for (const [key, tr] of [...this.transports.entries()]) {
+            if (normalizeServerUrl(key) === url) {
+                if (!t) {
+                    t = tr;
+                    if (key !== url) {
+                        this.transports.delete(key);
+                        this.transports.set(url, tr);
+                    }
+                } else if (key !== url) {
+                    this.transports.delete(key);
+                }
+            }
+        }
         if (!t) {
             t = new Transport();
-            this.transports.set(serverUrl, t);
+            this.transports.set(url, t);
         }
-        t.configure(serverUrl, { email, password });
-        this.primaryRelayId = relayId;
-        this.schedulePersist();
+        t.configure(url, { email, password });
+
+        if (makePrimary || !this.primaryRelayId || !this.relays.has(this.primaryRelayId)) {
+            this.primaryRelayId = keepId;
+        }
+        if (opts?.persist !== false && !unchanged) {
+            this.schedulePersist();
+        }
+        return keepId;
     }
 
     /**
@@ -291,16 +341,43 @@ export abstract class AccountBase {
             if (scoped) acct = scoped;
         }
 
-        // Restore relay
-        let relayId = '';
+        // Rebuild relays: one row per serverUrl (repairs 30+ duplicate primaries).
+        const memPassword = this.credentials.password || '';
+        const keepPassword =
+            (acct.password && acct.password.length > 0 ? acct.password : memPassword) || '';
+        const primaryUrl = normalizeServerUrl(acct.serverUrl);
+        const incoming: RelayRecord[] = [];
+        if (acct.relays?.length) {
+            for (const r of acct.relays) {
+                incoming.push({
+                    id: r.id,
+                    serverUrl: r.serverUrl,
+                    email: r.email,
+                    password: r.password || keepPassword,
+                });
+            }
+        }
+        incoming.push({
+            id: generateAccountId(),
+            serverUrl: primaryUrl,
+            email: acct.email,
+            password: keepPassword,
+        });
         for (const [id, r] of this.relays) {
-            if (r.serverUrl === acct.serverUrl) { relayId = id; break; }
+            if (normalizeServerUrl(r.serverUrl) === primaryUrl) {
+                incoming.push({
+                    id,
+                    serverUrl: primaryUrl,
+                    email: acct.email,
+                    password: keepPassword || r.password,
+                });
+            }
         }
-        if (!relayId) {
-            relayId = generateAccountId();
-        }
-        this.relays.set(relayId, { id: relayId, serverUrl: acct.serverUrl, email: acct.email, password: acct.password });
-        if (!this.primaryRelayId) this.primaryRelayId = relayId;
+        const unique = dedupeRelaysByServerUrl(incoming);
+        this.relays.clear();
+        for (const r of unique) this.relays.set(r.id, r);
+        const primary = unique.find(r => r.serverUrl === primaryUrl) || unique[0];
+        this.primaryRelayId = primary?.id || '';
 
         if (acct.privateKeyArmored) {
             this.privateKey = await openpgp.readPrivateKey({ armoredKey: acct.privateKeyArmored });
@@ -364,26 +441,17 @@ export abstract class AccountBase {
                 this.myAuthToken = acct.config.securejoin_auth;
             }
         }
-        if (acct.relays) {
-            for (const r of acct.relays) {
-                this.relays.set(r.id, { ...r });
-                if (!this.transports.has(r.serverUrl)) {
-                    const t = new Transport();
-                    t.configure(r.serverUrl, { email: r.email, password: r.password });
-                    this.transports.set(r.serverUrl, t);
-                }
-            }
-        }
-
-        // Ensure a transport exists for the loaded server
-        if (!this.transports.has(acct.serverUrl)) {
+        this.transports.clear();
+        for (const r of this.relays.values()) {
+            const url = normalizeServerUrl(r.serverUrl);
             const t = new Transport();
-            t.configure(acct.serverUrl, { email: acct.email, password: acct.password });
-            this.transports.set(acct.serverUrl, t);
-        } else {
-            this.transports.get(acct.serverUrl)!.configure(acct.serverUrl, { email: acct.email, password: acct.password });
+            t.configure(url, { email: r.email, password: r.password });
+            this.transports.set(url, t);
         }
-        log.info('sdk', `Loaded account: ${acct.email} (groups=${this.groups.size}, lastUid=${this.lastSeenUid})`);
+        log.info(
+            'sdk',
+            `Loaded account: ${acct.email} (groups=${this.groups.size}, relays=${this.relays.size}, lastUid=${this.lastSeenUid})`,
+        );
         return true;
     }
 
@@ -412,7 +480,7 @@ export abstract class AccountBase {
             profilePhotoB64: this.profilePhotoB64 || undefined,
             profilePhotoMime: this.profilePhotoMime || undefined,
             config: Object.fromEntries(this.configBag),
-            relays: [...this.relays.values()].map(r => ({
+            relays: dedupeRelaysByServerUrl(this.relays.values()).map(r => ({
                 id: r.id, serverUrl: r.serverUrl, email: r.email, password: r.password,
             })),
             groups,

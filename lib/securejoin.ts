@@ -113,31 +113,47 @@ export function randomToken(len: number): string {
 
 /** Parse a SecureJoin invite URI */
 export function parseSecureJoinURI(uri: string): SecureJoinParsed {
-    const hashIdx = uri.indexOf('#');
+    const cleaned = (uri || '').trim().replace(/\s+/g, '');
+    const hashIdx = cleaned.indexOf('#');
     if (hashIdx < 0) throw new Error('Invalid SecureJoin URI: missing # fragment');
-    const fragment = uri.substring(hashIdx + 1);
+    const fragment = cleaned.substring(hashIdx + 1);
 
-    // First segment before & is the fingerprint
     const fpEnd = fragment.indexOf('&');
     const fingerprint = fpEnd >= 0 ? fragment.substring(0, fpEnd) : fragment;
 
-    // Parse remaining params
     const paramStr = fpEnd >= 0 ? fragment.substring(fpEnd + 1) : '';
     const params: Record<string, string> = {};
     for (const kv of paramStr.split('&')) {
-        const [k, v] = kv.split('=');
-        if (k && v) params[k] = decodeURIComponent(v);
+        if (!kv) continue;
+        const eq = kv.indexOf('=');
+        if (eq < 0) continue;
+        const k = kv.substring(0, eq);
+        const v = kv.substring(eq + 1);
+        if (!k || !v) continue;
+        try {
+            params[k] = decodeURIComponent(v.replace(/\+/g, ' '));
+        } catch {
+            params[k] = v;
+        }
+    }
+
+    const inviterEmail = (params.a || '').trim();
+    if (!fingerprint) {
+        throw new Error('Invalid SecureJoin URI: missing fingerprint');
+    }
+    if (!inviterEmail.includes('@')) {
+        throw new Error('Invalid SecureJoin URI: missing inviter address (a=)');
     }
 
     return {
         fingerprint,
-        inviteNumber: params.i || params.j || '',  // `j` is used for broadcasts
+        inviteNumber: params.i || params.j || '',
         auth: params.s || '',
-        inviterEmail: params.a || '',
+        inviterEmail,
         name: params.n || '',
-        groupId: params.x,                          // `x` = grpid (group or broadcast)
-        groupName: params.g,                         // `g` = group name
-        broadcastName: params.b,                     // `b` = broadcast channel name
+        groupId: params.x,
+        groupName: params.g,
+        broadcastName: params.b,
     };
 }
 
@@ -242,11 +258,7 @@ export function createQrSvg(payload: string, size = 200): string {
 </svg>`;
 }
 
-/** Generate a SecureJoin invite URI.
- * Classic (non-v3) contact invite so desktop sends `vc-request` and we answer
- * with encrypted `vc-auth-required`. (v3 would use vc-request-pubkey.)
- * Fingerprint is uppercase hex without spaces (core Fingerprint::hex).
- */
+/** Generate a SecureJoin invite URI (v=3, IP-literal safe encoding). */
 export function generateSecureJoinURI(
     ctx: SDKContext,
     inviteNumber: string,
@@ -255,16 +267,10 @@ export function generateSecureJoinURI(
     if (!ctx.publicKey || !ctx.credentials.email) {
         throw new Error('Must register and generate keys before creating invite URI');
     }
-    const fp = (ctx.fingerprint || '').replace(/[^0-9A-Fa-f]/g, '').toUpperCase();
-    // Percent-encode like core's utf8_percent_encode (keep alnum . _)
-    const enc = (s: string) =>
-        encodeURIComponent(s).replace(/[!'()*]/g, c =>
-            '%' + c.charCodeAt(0).toString(16).toUpperCase().padStart(2, '0'),
-        );
-    const email = enc(ctx.credentials.email);
-    const rawName = (ctx.displayName || ctx.credentials.email.split('@')[0] || 'user').slice(0, 25);
-    const name = enc(rawName).replace(/%20/g, '+');
-    return `https://i.delta.chat/#${fp}&i=${inviteNumber}&s=${authToken}&a=${email}&n=${name}`;
+    const fp = ctx.fingerprint;
+    const email = encodeURIComponent(ctx.credentials.email);
+    const name = encodeURIComponent(ctx.displayName || ctx.credentials.email.split('@')[0]);
+    return `https://i.delta.chat/#${fp}&v=3&i=${inviteNumber}&s=${authToken}&a=${email}&n=${name}`;
 }
 
 /** Send vc-request / vg-request SecureJoin handshake (Phase 1) */
