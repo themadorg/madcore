@@ -33,13 +33,18 @@ bun run build
 ## Quick Start
 
 ```ts
-import { DeltaChatSDK } from 'madcore';
+import { DeltaChatSDK, log } from 'madcore';
 
 const SERVER = 'https://relay.example';
 
 // In browsers this defaults to IndexedDB (createStore()).
 // In Node / tests without IDB it uses MemoryStore.
-const dc = DeltaChatSDK({ logLevel: 'debug' });
+const dc = DeltaChatSDK({
+  logLevel: 'debug',
+  // logger: (method, ...args) => mySink.write(method, args),
+  // logTimestamps: true,       // default
+  // logIsoTimestamps: false,   // set true for ISO-8601 stamps
+});
 
 const { account: alice } = await dc.register(SERVER, 'Alice');
 const { account: bob }   = await dc.register(SERVER, 'Bob');
@@ -51,8 +56,48 @@ const uri = alice.generateSecureJoinURI();
 const { contact } = await bob.secureJoin(uri);
 
 await bob.send(contact, { text: 'Hello Alice!' });
-console.log(bob.status());
+log.log(bob.status()); // prefer madcore `log` over raw console
 ```
+
+### Logging
+
+All madcore diagnostics go through a **single** `log` API (`lib/logger.ts`). Every line is **timestamped** by default.
+
+| Option | Meaning |
+|--------|---------|
+| `logLevel` | `'debug' \| 'info' \| 'warn' \| 'error' \| 'none'` (default `'info'`) |
+| `logger` | Custom writer: `(method, ...args) => void` — same methods as `console` |
+| `logTimestamps` | Prefix wall-clock time (default `true`) |
+| `logIsoTimestamps` | ISO-8601 stamps instead of local `HH:mm:ss.mmm` |
+
+```ts
+import { DeltaChatSDK, log, configureLogger, setLogLevel } from 'madcore';
+
+const dc = DeltaChatSDK({
+  logLevel: 'debug',
+  logger: (method, ...args) => {
+    // e.g. forward to your app logger / file / remote
+    // method is 'log' | 'info' | 'warn' | 'error' | 'debug' | 'table' | …
+    console[method]?.(...args) ?? console.log(...args);
+  },
+});
+
+// Or configure globally without constructing the SDK:
+configureLogger({ logLevel: 'debug', isoTimestamps: true });
+
+// Tagged SDK logs (used throughout madcore):
+log.info('transport', 'WebSocket connected', { url });
+log.warn('crypto', 'decrypt failed', err);
+log.error('sdk', 'register failed', e);
+
+// Console-compatible surface (also timestamped + level-filtered):
+log.log('hello', { x: 1 });
+log.table([{ a: 1 }]);
+log.group('batch');
+log.groupEnd();
+```
+
+The same options are accepted by `createJsonRpcCompat(..., { logLevel, logger, … })`.
 
 ### Persistence (browser)
 

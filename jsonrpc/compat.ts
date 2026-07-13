@@ -28,7 +28,7 @@ import type { DeltaChatAccount } from '../account/account.js';
 import type { StoredChat, StoredContact, StoredMessage } from '../store.js';
 import { storeTypeToViewtype } from '../lib/viewtype.js';
 import { parseSecureJoinURI } from '../lib/securejoin.js';
-import { log } from '../lib/logger.js';
+import { log, configureLogger } from '../lib/logger.js';
 import type { DCEvent, DCEventData } from '../types.js';
 import {
     ALL_JSONRPC_METHODS,
@@ -101,6 +101,14 @@ export interface JsonRpcCompatOptions {
         displayName?: string;
         configured: boolean;
     }>;
+    /**
+     * Logging — same knobs as `DeltaChatSDK({ logLevel, logger, … })`.
+     * Applied via `configureLogger` when the compat facade is constructed.
+     */
+    logLevel?: import('../lib/logger.js').LogLevel;
+    logger?: import('../lib/logger.js').LoggerFn;
+    logTimestamps?: boolean;
+    logIsoTimestamps?: boolean;
 }
 
 interface AccountSlot {
@@ -282,7 +290,19 @@ export class DeltaChatJsonRpc {
     private readonly restoreAccounts: JsonRpcCompatOptions['restoreAccounts'];
 
     constructor(sdk?: IDeltaChatManager, options: JsonRpcCompatOptions = {}) {
-        this.sdk = sdk ?? DeltaChatSDK({ logLevel: 'info' });
+        // Apply logging before any work (and before default SDK construction).
+        configureLogger({
+            logLevel: options.logLevel,
+            logger: options.logger,
+            timestamps: options.logTimestamps,
+            isoTimestamps: options.logIsoTimestamps,
+        });
+        this.sdk = sdk ?? DeltaChatSDK({
+            logLevel: options.logLevel ?? 'info',
+            logger: options.logger,
+            logTimestamps: options.logTimestamps,
+            logIsoTimestamps: options.logIsoTimestamps,
+        });
         // Use nullish coalesce so an explicit empty string (madweb: user picks server) is kept.
         this.defaultServerUrl = String(options.defaultServerUrl ?? 'https://nine.testrun.org').replace(/\/+$/, '');
         this.onEvent = options.onEvent;

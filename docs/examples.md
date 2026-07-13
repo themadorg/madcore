@@ -7,6 +7,7 @@ Usage guide for **madcore**. Install and package entry points are in the [README
 ## Table of Contents
 
 - [Quick Start](#quick-start)
+- [Logging](#logging)
 - [Multi-Account Manager](#multi-account-manager)
 - [Standalone Account](#standalone-account)
 - [The Factory Pattern](#the-factory-pattern)
@@ -56,6 +57,59 @@ console.log(bob.status());
 
 > **Persistence:** In browsers, data is saved to IndexedDB by default (see [Persistent Storage](#persistent-storage)).  
 > Force RAM-only with `store: new MemoryStore()` for tests.
+
+---
+
+## Logging
+
+Every madcore diagnostic goes through **`log`** (`lib/logger.ts`). There is one
+writer path: `writeLog` → custom `logger` (if set) or `console[method]`.
+
+```ts
+import { DeltaChatSDK, log, configureLogger, setLogLevel } from 'madcore';
+
+const dc = DeltaChatSDK({
+  logLevel: 'debug', // 'debug' | 'info' | 'warn' | 'error' | 'none'
+  // Optional custom sink — same method names as console:
+  logger: (method, ...args) => {
+    // method: 'log' | 'info' | 'warn' | 'error' | 'debug' | 'table' | 'group' | …
+    myAppLogger[method]?.(...args) ?? myAppLogger.log(...args);
+  },
+  logTimestamps: true,     // default true — set false if logger already stamps
+  logIsoTimestamps: false, // true → 2026-07-13T12:34:56.789Z
+});
+
+// Or configure without constructing the SDK:
+configureLogger({ logLevel: 'debug', isoTimestamps: true });
+setLogLevel('warn'); // convenience for level-only changes
+
+// Tagged SDK logs (used throughout the codebase):
+log.debug('transport', 'WS frame', data);
+log.info('sdk', 'Registered', email);
+log.warn('mime', 'Unknown content-type', ct);
+log.error('crypto', 'Decryption failed', err);
+
+// Console-compatible helpers (also timestamped + level-filtered):
+log.log('hello', { x: 1 });
+log.table(rows);
+log.group('batch');
+log.groupEnd();
+log.time('op');
+log.timeEnd('op');
+log.trace('stack');
+log.assert(condition, 'must hold');
+```
+
+JSON-RPC compat accepts the same knobs:
+
+```ts
+import { createJsonRpcCompat } from 'madcore/jsonrpc';
+
+const rpc = createJsonRpcCompat(undefined, {
+  logLevel: 'debug',
+  logger: (method, ...args) => console[method](...args),
+});
+```
 
 ---
 

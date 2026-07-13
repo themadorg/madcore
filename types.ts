@@ -11,6 +11,7 @@
  */
 
 import type { IDeltaChatStore, StoredChat, StoredMessage, StoredContact } from './store.js';
+import type { LogLevel, LoggerFn } from './lib/logger.js';
 
 // ─── SDK Configuration ──────────────────────────────────────────────────────────
 
@@ -19,12 +20,34 @@ import type { IDeltaChatStore, StoredChat, StoredMessage, StoredContact } from '
  *
  * @example
  * ```ts
- * const dc = DeltaChatSDK({ logLevel: 'debug' });
+ * const dc = DeltaChatSDK({
+ *   logLevel: 'debug',
+ *   logger: (method, ...args) => myAppLog(method, args),
+ * });
  * ```
  */
 export interface SDKConfig {
-    /** Log level for the SDK (default: 'info') */
-    logLevel?: 'debug' | 'info' | 'warn' | 'error' | 'none';
+    /**
+     * Minimum log level for the SDK (default: `'info'`).
+     * Use `'none'` to silence all madcore logs.
+     */
+    logLevel?: LogLevel;
+    /**
+     * Custom log writer. Receives a console method name (`'log' | 'warn' | …`)
+     * plus the same arguments you would pass to `console[method]`.
+     * When omitted, madcore writes to `console` with timestamps.
+     */
+    logger?: LoggerFn;
+    /**
+     * Prefix a wall-clock timestamp on every log line (default: `true`).
+     * Set `false` if your `logger` already timestamps.
+     */
+    logTimestamps?: boolean;
+    /**
+     * Use ISO-8601 timestamps (`2026-07-13T12:34:56.789Z`) instead of local
+     * `HH:mm:ss.mmm` (default: `false`).
+     */
+    logIsoTimestamps?: boolean;
     /**
      * Persistence backend.
      * Default: `createStore()` — IndexedDB in browsers, MemoryStore elsewhere.

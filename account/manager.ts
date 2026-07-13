@@ -1,7 +1,7 @@
 /**
  * DeltaChatSDK multi-account manager factory.
  */
-import { log, setLogLevel } from '../lib/logger.js';
+import { log, configureLogger } from '../lib/logger.js';
 import {
     createStore,
     IndexedDBStore,
@@ -84,7 +84,10 @@ async function rememberIfIdb(
  * @example
  * ```ts
  * // Browser: defaults to IndexedDB via createStore()
- * const dc = DeltaChatSDK({ logLevel: 'debug' });
+ * const dc = DeltaChatSDK({
+ *   logLevel: 'debug',
+ *   logger: (method, ...args) => hostLog(method, args),
+ * });
  * const { account } = await dc.register('https://relay.example', 'Alice');
  * await account.connect();
  *
@@ -95,7 +98,12 @@ async function rememberIfIdb(
  * ```
  */
 export function DeltaChatSDK(config: SDKConfig = {}): IDeltaChatManager {
-    if (config.logLevel) setLogLevel(config.logLevel);
+    configureLogger({
+        logLevel: config.logLevel,
+        logger: config.logger,
+        timestamps: config.logTimestamps,
+        isoTimestamps: config.logIsoTimestamps,
+    });
 
     // Browser → IndexedDB; Node/tests without IDB → MemoryStore
     const store = config.store ?? createStore();

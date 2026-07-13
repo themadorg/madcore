@@ -45,8 +45,24 @@ export {
 
 // ─── Logging ────────────────────────────────────────────────────────────────────
 
-export { log, setLogLevel, getLogLevel } from './lib/logger.js';
-export type { LogLevel } from './lib/logger.js';
+export {
+    log,
+    writeLog,
+    setLogLevel,
+    getLogLevel,
+    setLogger,
+    getLogger,
+    configureLogger,
+    addLogSink,
+} from './lib/logger.js';
+export type {
+    LogLevel,
+    LogMethod,
+    LoggerFn,
+    LoggerConfig,
+    LogSink,
+    MadcoreLogger,
+} from './lib/logger.js';
 
 // ─── Types ──────────────────────────────────────────────────────────────────────
 
